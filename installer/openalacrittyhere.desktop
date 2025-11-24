@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Service
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=inode/directory;
+Actions=openinalacritty
+X-KDE-Priority=TopLevel
+X-KDE-StartupNotify=false
+Icon=Alacritty
+
+[Desktop Action openinalacritty]
+Name=Open Alacritty Here...
+Exec=alacritty --working-directory %f
+Icon=Alacritty

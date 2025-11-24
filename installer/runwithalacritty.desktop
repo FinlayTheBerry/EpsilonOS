@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Service
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=application/x-shellscript;
+Actions=runwithalacritty
+X-KDE-Priority=TopLevel
+X-KDE-StartupNotify=false
+Icon=Alacritty
+
+[Desktop Action runwithalacritty]
+Name=Run With Alacritty...
+Exec=alacritty -e bash -c "%f"
+Icon=Alacritty
