@@ -61,8 +61,8 @@ def Main():
         return 1
     print()
 
-    print("\033[36mClearing cache...\033[0m")
-    RunCommand("yay -Scc --noconfirm", echo=True)
+    print("\033[36mUpdating all packages...\033[0m")
+    RunCommand("yay -Syu --noconfirm", echo=True)
     print()
 
     print(f"\033[36mRemoving orphaned packages...\033[0m")
@@ -75,8 +75,8 @@ def Main():
         RunCommand(f"yay -Rns {" ".join(orphans)} --noconfirm")
     print()
 
-    print("\033[36mUpdating all packages...\033[0m")
-    RunCommand("yay -Syu --noconfirm", echo=True)
+    print("\033[36mClearing cache...\033[0m")
+    RunCommand("yay -Scc --noconfirm", echo=True)
     print()
 
     return 0

@@ -2,7 +2,6 @@
 import subprocess
 import os
 import sys
-import time
 
 # region EOS Script Helpers
 def WriteFile(filePath, contents, binary=False):
@@ -17,12 +16,17 @@ def ReadFile(filePath, defaultContents=None, binary=False):
             return defaultContents
     with open(filePath, "rb" if binary else "r", encoding=(None if binary else "UTF-8")) as file:
         return file.read()
-def RunCommand(command, echo=False, capture=False, input=None, check=True):
-    result = subprocess.run(command, capture_output=(not echo), input=input, check=check, shell=True, text=True)
+def RunCommand(command, echo=False, capture=False, input=None, check=True, env=None):
+    if echo and capture:
+        raise Exception("Command cannot be run with both echo and capture.")
+    result = subprocess.run(command, stdout=(None if echo else subprocess.PIPE), stderr=(None if echo else subprocess.STDOUT), input=input, env=env, check=False, shell=True, text=True)
+    if check and result.returncode != 0:
+        print(result.stdout)
+        raise Exception(f"Sub-process returned non-zero exit code.\nExitCode: {result.returncode}\nCmdLine: {command}")
     if capture and not check:
-        return (result.stdout + result.stderr).strip(), result.returncode
+        return result.stdout.strip(), result.returncode
     elif capture:
-        return (result.stdout + result.stderr).strip()
+        return result.stdout.strip()
     elif not check:
         return result.returncode
     else:
@@ -72,13 +76,13 @@ def Main():
     if not "successfully authenticated" in RunCommand(f"ssh git@github.com", capture=True, check=False)[0]:
         PrintError("ssh doesn't seem to be properly setup. git@github.com refused authentication.")
         return 1
-    if RunCommand(f"git config user.name", capture=True) == "":
+    if RunCommand(f"git config user.name", capture=True, check=False)[0] == "":
         PrintError("Git username not set. Please run: git config --global user.name \"Your Name\"")
         return 1
-    if RunCommand(f"git config user.email", capture=True) == "":
+    if RunCommand(f"git config user.email", capture=True, check=False)[0] == "":
         PrintError("Git email not set. Please run: git config --global user.email \"Your Email\"")
         return 1
-    if RunCommand(f"git config push.autoSetupRemote", capture=True) != "true":
+    if RunCommand(f"git config push.autoSetupRemote", capture=True, check=False)[0] != "true":
         PrintError("Git is not configured with auto setup remote. Please run: git config --global push.autoSetupRemote true")
         return 1
 
@@ -90,12 +94,16 @@ def Main():
         ".js", ".ts", ".html", ".css", ".htm", # Web
         ".rb", ".swift", ".go", ".php", ".r", ".rs", ".sql", ".kt", ".dart" # Other
     ]
-    code_paths = RunCommand(f"find \"/important_data/\" -type f" + " -o".join([ f" -name \"*{code_ext}\"" for code_ext in code_exts ]), capture=True).splitlines()
+    code_paths = RunCommand(f"find \"/important_data\" -type f" + " -o".join([ f" -name \"*{code_ext}\"" for code_ext in code_exts ]), capture=True).splitlines()
     repo_paths = [ os.path.dirname(repo_path) for repo_path in RunCommand(f"find \"/important_data/\" -type d -name \".git\"", capture=True).splitlines() ]
     backup_file_paths = RunCommand(f"find \"/important_data/\" -type f -name \"*.backup\"", capture=True).splitlines()
+    print()
+    
+    print("Listing backup files for audit...")
     ignore_repos_paths = []
     ignore_code_paths = []
     for backup_file_path in backup_file_paths:
+        print(backup_file_path)
         backup_file_name = os.path.basename(backup_file_path)
         if backup_file_name == "ignorerepos.backup":
            ignore_repos_paths.append(os.path.dirname(backup_file_path))
@@ -103,14 +111,23 @@ def Main():
            ignore_code_paths.append(os.path.dirname(backup_file_path))
         else:
             PrintWarning(f"Unknown backup file at \"{backup_file_path}\".")
+    print()
 
     # Checking for unprotected code
+    print("Scanning for unprotected code...")
     for code_path in code_paths:
         if any([ code_path.startswith(repo_path) for repo_path in repo_paths ]):
             continue
         if any([ code_path.startswith(ignore_code_path) for ignore_code_path in ignore_code_paths ]):
             continue
         PrintWarning(f"Unprotected code at \"{code_path}\".")
+    print()
+
+    for repo_path in repo_paths:
+        os.chdir(repo_path)
+        remote_url, status_code = RunCommand(f"git remote get-url origin", capture=True, check=False)
+        print(remote_url)
+
 
     # Committing and pushing git repos
     print("Committing and pushing all repos...")
@@ -121,7 +138,7 @@ def Main():
             PrintError(f"Repo missing required .gitignore. \"{repo_path}\"")
             continue
         os.chdir(repo_path)
-        remote_url, status_code  = RunCommand(f"git remote get-url origin", capture=True, check=False)
+        remote_url, status_code = RunCommand(f"git remote get-url origin", capture=True, check=False)
         if status_code != 0 or not remote_url.startswith("git@github.com:RandomiaGaming/"):
             PrintError(f"Repo has invalid or non-existant remote origin. \"{repo_path}\".")
             continue
