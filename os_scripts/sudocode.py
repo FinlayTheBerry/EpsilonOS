@@ -61,34 +61,6 @@ Install()
 # endregion
 
 def Main():
-    if os.geteuid() != 0 or os.getegid() != 0:
-        script_name = os.path.splitext(os.path.basename(os.path.realpath(__file__)))[0]
-        PrintError(f"Root is required to take a backup. Try sudo {script_name}.")
-        return 1
-    if not os.path.exists("/important_data"):
-        PrintError("/important_data does not exist. Did you forget to run important_data?")
-        return
-    if RunCommand("findmnt /important_data", check=False) != 0:
-        PrintError("Nothing is mounted at /important_data. Did you forget to run important_data?")
-        return
-    if not os.path.exists("/backup"):
-        RunCommand("mkdir /backup")
-        RunCommand("chmod 777 /backup")
-        RunCommand("chown root:root /backup")
-    if len(os.listdir("/backup")) != 0:
-        PrintError("/backup is not empty.")
-        return 1
-    if RunCommand("findmnt /backup", check=False) == 0:
-        PrintError("Something is already mounted at /backup.")
-    backup_dev, status_code = RunCommand("blkid --uuid b463d26d-23d8-4c12-8f4b-5be63fb1b2f3", check=False, capture=True)
-    if status_code != 0:
-        PrintError("backup drive is not connected to this PC.")
-        return 1
-    RunCommand(f"mount -t ext4 -o rw,noatime,discard,errors=remount-ro \"{backup_dev}\" /backup")
-    RunCommand(f"mount -o ro,noatime,discard,errors=remount-ro,remount /important_data")
-    RunCommand(f"rsync --verbose --archive --executability --acls --xattrs --atimes --open-noatime --delete-after --numeric-ids --human-readable --progress /important_data/ /backup/", echo=True)
-    RunCommand(f"mount -o rw,noatime,discard,errors=remount-ro,remount /important_data")
-    RunCommand(f"umount /backup")
-    print("Backup Complete!")
+    RunCommand("sudo code --no-sandbox --user-data-dir \"$HOME\" .")
     return 0
 sys.exit(Main())

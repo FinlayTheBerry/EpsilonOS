@@ -1,8 +1,0 @@
-curl --proto '=https' --tlsv1.3 https://google.com/epack.crt
-
-An .epack file is really just a .tgz file which contains a manifest.json file.
-All epack files use the deflate compression algorithm which is the default for gzip.
-All epack files also use the tarball format to store contained files and folders.
-The gzip spec supports many compression algorithms but epack only supports deflate.
-The tarball spec supports many file permissions but epack restricts most of these.
-For exmple extracting an epack file where a random binary has rwsrwsrwx root:root permissions would be a massive risk so obviously permissions are audited and often reset to r-x------ appname:appname for security.

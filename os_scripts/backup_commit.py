@@ -36,6 +36,7 @@ def PrintWarning(message):
 def PrintError(message):
     print(f"\033[91mERROR: {message}\033[0m")
 def Install():
+    # Note: Install() depends on the coreutils and sudo pacman packages.
     script_path = os.path.realpath(__file__)
     script_name = os.path.splitext(os.path.basename(script_path))[0]
     install_path = f"/usr/bin/{script_name}"
@@ -73,9 +74,6 @@ def Main():
         script_name = os.path.splitext(os.path.basename(os.path.realpath(__file__)))[0]
         PrintError(f"{script_name} may not be run as root. Please try again.")
         return 1
-    if not "successfully authenticated" in RunCommand(f"ssh git@github.com", capture=True, check=False)[0]:
-        PrintError("ssh doesn't seem to be properly setup. git@github.com refused authentication.")
-        return 1
     if RunCommand(f"git config user.name", capture=True, check=False)[0] == "":
         PrintError("Git username not set. Please run: git config --global user.name \"Your Name\"")
         return 1
@@ -85,73 +83,50 @@ def Main():
     if RunCommand(f"git config push.autoSetupRemote", capture=True, check=False)[0] != "true":
         PrintError("Git is not configured with auto setup remote. Please run: git config --global push.autoSetupRemote true")
         return 1
+    if RunCommand(f"git config branch.autoSetupMerge", capture=True, check=False)[0] != "always":
+        PrintError("Git is not configured with auto setup merge. Please run: git config --global branch.autoSetupMerge always")
+        return 1
+    sshStatusEndMarker = "! You've successfully authenticated, but GitHub does not provide shell access."
+    sshStatusStartMarker = "Hi "
+    sshStatus = RunCommand(f"ssh git@github.com", capture=True, check=False)[0]
+    sshStatusEndMarkerPos = sshStatus.find(sshStatusEndMarker)
+    sshStatusStartMarkerPos = sshStatus.rfind(sshStatusStartMarker, 0, sshStatusEndMarkerPos)
+    if sshStatusEndMarkerPos == -1 or sshStatusStartMarkerPos == -1:
+        PrintError("ssh doesn't seem to be properly setup. git@github.com refused authentication.")
+        return 1
+    githubUsername = sshStatus[sshStatusStartMarkerPos + len(sshStatusStartMarker):sshStatusEndMarkerPos]
 
     # Enumerating files and folders
-    print("Enumerating files in /important_data/...")
-    code_exts = [
-        ".c", ".cpp", ".cc", ".asm", ".cs", ".java", # C family
-        ".py", ".ps1", ".sh", ".cmd", ".bat", # Scripting
-        ".js", ".ts", ".html", ".css", ".htm", # Web
-        ".rb", ".swift", ".go", ".php", ".r", ".rs", ".sql", ".kt", ".dart" # Other
-    ]
-    code_paths = RunCommand(f"find \"/important_data\" -type f" + " -o".join([ f" -name \"*{code_ext}\"" for code_ext in code_exts ]), capture=True).splitlines()
+    print("Locating repos...")
     repo_paths = [ os.path.dirname(repo_path) for repo_path in RunCommand(f"find \"/important_data/\" -type d -name \".git\"", capture=True).splitlines() ]
-    backup_file_paths = RunCommand(f"find \"/important_data/\" -type f -name \"*.backup\"", capture=True).splitlines()
     print()
     
-    print("Listing backup files for audit...")
-    ignore_repos_paths = []
-    ignore_code_paths = []
-    for backup_file_path in backup_file_paths:
-        print(backup_file_path)
-        backup_file_name = os.path.basename(backup_file_path)
-        if backup_file_name == "ignorerepos.backup":
-           ignore_repos_paths.append(os.path.dirname(backup_file_path))
-        elif backup_file_name == "ignorecode.backup":
-           ignore_code_paths.append(os.path.dirname(backup_file_path))
-        else:
-            PrintWarning(f"Unknown backup file at \"{backup_file_path}\".")
-    print()
-
-    # Checking for unprotected code
-    print("Scanning for unprotected code...")
-    for code_path in code_paths:
-        if any([ code_path.startswith(repo_path) for repo_path in repo_paths ]):
-            continue
-        if any([ code_path.startswith(ignore_code_path) for ignore_code_path in ignore_code_paths ]):
-            continue
-        PrintWarning(f"Unprotected code at \"{code_path}\".")
-    print()
-
-    for repo_path in repo_paths:
-        os.chdir(repo_path)
-        remote_url, status_code = RunCommand(f"git remote get-url origin", capture=True, check=False)
-        print(remote_url)
-
-
     # Committing and pushing git repos
     print("Committing and pushing all repos...")
-    for repo_path in repo_paths:
-        if any([ repo_path.startswith(ignore_repos_path) for ignore_repos_path in ignore_repos_paths ]):
+    for i in range(len(repo_paths)):
+        if i < 143:
+            continue
+        print(f"{i} of {len(repo_paths)}...")
+        repo_path = repo_paths[i]
+        os.chdir(repo_path)
+        remote = RunCommand("git remote", capture=True)
+        if remote == "":
+            PrintError(f"Repo \"{repo_path}\" has a no origin.")
+            continue
+        origin = RunCommand(f"git remote get-url \"{remote}\"", capture=True)
+        if not origin.startswith(f"git@github.com:{githubUsername}/") or not origin.endswith(".git"):
+            PrintWarning(f"Repo \"{repo_path}\" has a bad origin \"{origin}\".")
             continue
         if not os.path.isfile(os.path.join(repo_path, ".gitignore")):
-            PrintError(f"Repo missing required .gitignore. \"{repo_path}\"")
-            continue
-        os.chdir(repo_path)
-        remote_url, status_code = RunCommand(f"git remote get-url origin", capture=True, check=False)
-        if status_code != 0 or not remote_url.startswith("git@github.com:RandomiaGaming/"):
-            PrintError(f"Repo has invalid or non-existant remote origin. \"{repo_path}\".")
-            continue
-        if RunCommand("git rev-parse @", capture=True) != RunCommand("git rev-parse @{u}", capture=True):
-            PrintError(f"Repo has become desync with remote origin. \"{repo_path}\".")
+            PrintError(f"Repo \"{repo_path}\" has no .gitignore.")
             continue
         changes = RunCommand(f"git status --porcelain", capture=True)
         if changes != "":
             print(f"Committing and pushing changes to \"{repo_path}\"...")
-            RunCommand(f"git rm --cached -r .")
+            RunCommand(f"git rm --cached -r .", check=False) # Ignore status as this fails when nothing is tracked currently
             RunCommand(f"git add --all")
             RunCommand(f"git commit -m\"Auto-generated backup commit.\"")
-            RunCommand(f"git push origin --all")
+        RunCommand(f"git push origin --all")
 
     print("Backup Complete!")
     return 0

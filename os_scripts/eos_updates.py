@@ -16,12 +16,17 @@ def ReadFile(filePath, defaultContents=None, binary=False):
             return defaultContents
     with open(filePath, "rb" if binary else "r", encoding=(None if binary else "UTF-8")) as file:
         return file.read()
-def RunCommand(command, echo=False, capture=False, input=None, check=True):
-    result = subprocess.run(command, capture_output=(not echo), input=input, check=check, shell=True, text=True)
+def RunCommand(command, echo=False, capture=False, input=None, check=True, env=None):
+    if echo and capture:
+        raise Exception("Command cannot be run with both echo and capture.")
+    result = subprocess.run(command, stdout=(None if echo else subprocess.PIPE), stderr=(None if echo else subprocess.STDOUT), input=input, env=env, check=False, shell=True, text=True)
+    if check and result.returncode != 0:
+        print(result.stdout)
+        raise Exception(f"Sub-process returned non-zero exit code.\nExitCode: {result.returncode}\nCmdLine: {command}")
     if capture and not check:
-        return (result.stdout + result.stderr).strip(), result.returncode
+        return result.stdout.strip(), result.returncode
     elif capture:
-        return (result.stdout + result.stderr).strip()
+        return result.stdout.strip()
     elif not check:
         return result.returncode
     else:
@@ -31,6 +36,7 @@ def PrintWarning(message):
 def PrintError(message):
     print(f"\033[91mERROR: {message}\033[0m")
 def Install():
+    # Note: Install() depends on the coreutils and sudo pacman packages.
     script_path = os.path.realpath(__file__)
     script_name = os.path.splitext(os.path.basename(script_path))[0]
     install_path = f"/usr/bin/{script_name}"
@@ -66,7 +72,7 @@ def Main():
     print()
 
     print(f"\033[36mRemoving orphaned packages...\033[0m")
-    stdout, statusCode = RunCommand("yay -Qqdt", capture=True, check=False)
+    stdout, _ = RunCommand("yay -Qqdt", capture=True, check=False)
     orphans = stdout.splitlines()
     if len(orphans) == 0:
         print("There is nothing to do.")
