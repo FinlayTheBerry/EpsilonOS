@@ -31,28 +31,6 @@ def PrintWarning(message):
     print(f"\033[93mWarning: {message}\033[0m")
 def PrintError(message):
     print(f"\033[91mERROR: {message}\033[0m")
-def Install():
-    script_path = os.path.realpath(__file__)
-    script_name = os.path.splitext(os.path.basename(script_path))[0]
-    install_path = f"/usr/bin/{script_name}"
-    if script_path == install_path:
-        return
-    if os.path.exists(install_path) and os.path.getmtime(script_path) == os.path.getmtime(install_path):
-        return
-    if os.path.exists(install_path) and os.path.getmtime(script_path) < os.path.getmtime(install_path):
-        PrintWarning(f"Not installing because script in \"{install_path}\" is newer than \"{script_path}\".")
-        return
-    if os.geteuid() != 0 or os.getegid() != 0:
-        print(f"Root is required to install \"{script_path}\" to \"{install_path}\".")
-    sudo_commands = [
-        f"cp -p \"{script_path}\" \"{install_path}\"",
-        f"chmod 755 \"{install_path}\"",
-        f"chown +0:+0 \"{install_path}\"",
-    ]
-    RunCommand(f"sudo sh -c \'{"; ".join(sudo_commands)}\'")
-    print(f"Installed \"{script_path}\" to \"{install_path}\".")
-    print()
-Install()
 # endregion
 
 def Main():
@@ -87,7 +65,7 @@ def Main():
     optrom_esl_path = "/home/finlaytheberry/Desktop/optrom.esl"
     if not os.path.exists(optrom_esl_path):
         PrintError(f"OPTROM signatures could not be found at \"{optrom_esl_path}\".")
-        return 1
+        # return 1
     secure_boot = ReadFile("/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c", binary=True)[4:] == b"\x01"
     setup_mode = ReadFile("/sys/firmware/efi/efivars/SetupMode-8be4df61-93ca-11d2-aa0d-00e098032b8c", binary=True)[4:] == b"\x01"
     if not secure_boot and not setup_mode:
@@ -136,7 +114,7 @@ def Main():
         f"MODULES=(fat vfat nls_iso8859_1)",
         f"BINARIES=()",
         f"FILES=()",
-        f"HOOKS=(autodetect base udev microcode keyboard keymap numlock block encrypt filesystems)",
+        f"HOOKS=(autodetect base udev microcode keyboard keymap numlock block encrypt resume filesystems)",
         f"COMPRESSION=\"cat\"",
         f"COMPRESSION_OPTIONS=()",
     ]
@@ -152,6 +130,8 @@ def Main():
     # Generate unified kernel image
     print("Making unified kernel image...")
     crypt_root_uuid = RunCommand(f"blkid -o value -s UUID \"{crypt_root_dev}\"", capture=True)
+    # Hiber options
+    # resume=UUID={} resume_offset={33699840} hibernate.compressor=lz4 
     cmdline = f"cryptdevice=UUID={crypt_root_uuid}:crypt_root root=/dev/mapper/crypt_root rw"
     kernel_info = RunCommand(f"file \"{kernel_path}\"", capture=True)
     uname = kernel_info[kernel_info.find("version ") + len("version "):]

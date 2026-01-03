@@ -35,38 +35,14 @@ def PrintWarning(message):
     print(f"\033[93mWarning: {message}\033[0m")
 def PrintError(message):
     print(f"\033[91mERROR: {message}\033[0m")
-def Install():
-    # Note: Install() depends on the coreutils and sudo pacman packages.
-    script_path = os.path.realpath(__file__)
-    script_name = os.path.splitext(os.path.basename(script_path))[0]
-    install_path = f"/usr/bin/{script_name}"
-    if script_path == install_path:
-        return
-    if os.path.exists(install_path) and os.path.getmtime(script_path) == os.path.getmtime(install_path):
-        return
-    if os.path.exists(install_path) and os.path.getmtime(script_path) < os.path.getmtime(install_path):
-        PrintWarning(f"Not installing because script in \"{install_path}\" is newer than \"{script_path}\".")
-        return
-    if os.geteuid() != 0 or os.getegid() != 0:
-        print(f"Root is required to install \"{script_path}\" to \"{install_path}\".")
-    sudo_commands = [
-        f"cp -p \"{script_path}\" \"{install_path}\"",
-        f"chmod 755 \"{install_path}\"",
-        f"chown +0:+0 \"{install_path}\"",
-    ]
-    RunCommand(f"sudo sh -c \'{"; ".join(sudo_commands)}\'")
-    print(f"Installed \"{script_path}\" to \"{install_path}\".")
-    print()
-Install()
 # endregion
 
 # Types of .backup files:
-# lastpush.backup: Stores the timestamp when the given repo was last pushed to the remote.
 # ignorerepos.backup: Tells this script not to commit, push, or warn about no remote for the git repo in the given folder.
 # ignorecode.backup: Tells this script to silence warnings about unprotected code in the given folder recursively.
 #
 # To audit .backup files:
-# find /important_data/ -type f -name "*.backup" -not -path "*/.git/lastpush.backup"
+# find /important_data/ -type f -name "*.backup"
 
 def Main():
     # Initial scanity checks
@@ -104,8 +80,6 @@ def Main():
     # Committing and pushing git repos
     print("Committing and pushing all repos...")
     for i in range(len(repo_paths)):
-        if i < 143:
-            continue
         print(f"{i} of {len(repo_paths)}...")
         repo_path = repo_paths[i]
         os.chdir(repo_path)
