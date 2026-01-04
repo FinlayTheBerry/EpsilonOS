@@ -65,6 +65,7 @@ def HashEFIImage(efi_image_path):
 
     return hasher.digest()
 def WriteESL(signature_data, esl_path):
+    print(signature_data.hex())
     signature_type = bytes.fromhex("2616c4c14c509240aca941f936934328") # EFI_CERT_SHA256_GUID
     signature_list_size = struct.pack("<I", 76) # SignatureHeaderSize + SignatureSize
     signature_header_size = struct.pack("<I", 28) # sizeof(EFI_SIGNATURE_LIST)

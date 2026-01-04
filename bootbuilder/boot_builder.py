@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import subprocess
 import os
-import re
 import sys
 
 # region EOS Script Helpers
@@ -17,12 +16,17 @@ def ReadFile(filePath, defaultContents=None, binary=False):
             return defaultContents
     with open(filePath, "rb" if binary else "r", encoding=(None if binary else "UTF-8")) as file:
         return file.read()
-def RunCommand(command, echo=False, capture=False, input=None, check=True):
-    result = subprocess.run(command, capture_output=(not echo), input=input, check=check, shell=True, text=True)
+def RunCommand(command, echo=False, capture=False, input=None, check=True, env=None):
+    if echo and capture:
+        raise Exception("Command cannot be run with both echo and capture.")
+    result = subprocess.run(command, stdout=(None if echo else subprocess.PIPE), stderr=(None if echo else subprocess.STDOUT), input=input, env=env, check=False, shell=True, text=True)
+    if check and result.returncode != 0:
+        print(result.stdout)
+        raise Exception(f"Sub-process returned non-zero exit code.\nExitCode: {result.returncode}\nCmdLine: {command}")
     if capture and not check:
-        return (result.stdout + result.stderr).strip(), result.returncode
+        return result.stdout.strip(), result.returncode
     elif capture:
-        return (result.stdout + result.stderr).strip()
+        return result.stdout.strip()
     elif not check:
         return result.returncode
     else:
@@ -39,21 +43,22 @@ def Main():
     install_path = f"/usr/bin/{script_name}"
 
     # Initial setup and scanity checks
-    if os.geteuid() != 0 or os.getegid() != 0:
+    is_root = os.geteuid() == 0 and os.getegid() == 0
+    if not is_root:
         PrintError(f"Root is required to run {script_name}. Try sudo {script_name}.")
         return 1
     if RunCommand("findmnt --noheadings --raw --output source --target /boot", check=False) != 0:
         PrintError("Nothing is mounted on /boot. Did you forget something?")
         return 1
     if RunCommand("findmnt --noheadings --raw --output source --target /sys/firmware/efi/efivars/", check=False) != 0:
-        PrintError("Nothing is mounted on /sys/firmware/efi/efivars/. Maybe you forgot to mount efivarsfs inside a chroot?")
+        PrintError("Nothing is mounted on /sys/firmware/efi/efivars/. Did you forget something?")
         return 1
     kernel_paths = RunCommand("find /usr/lib/modules -maxdepth 2 -mindepth 2 -type f -name vmlinuz", capture=True).splitlines()
     if len(kernel_paths) == 0:
         PrintError("Unable to locate system kernel.")
         return 1
     if len(kernel_paths) > 1:
-        PrintError("Multiple system kernels installed.")
+        PrintError("Multiple system kernels found.")
         return 1
     kernel_path = kernel_paths[0]
     root_dev = RunCommand("findmnt --noheadings --raw --output source --target /", capture=True)
@@ -62,10 +67,10 @@ def Main():
         PrintError(f"{script_name} requires an encrypted root partition.")
         return 1
     crypt_root_dev = crypt_info[crypt_info.find("device:") + len("device:"):crypt_info.find("\n", crypt_info.find("device:") + len("device:"))].strip()
-    optrom_esl_path = "/home/finlaytheberry/Desktop/optrom.esl"
-    if not os.path.exists(optrom_esl_path):
-        PrintError(f"OPTROM signatures could not be found at \"{optrom_esl_path}\".")
-        # return 1
+    oprom_esl_path = "./oprom.esl"
+    if not os.path.exists(oprom_esl_path):
+        PrintError(f"OpROM signatures could not be found at \"{oprom_esl_path}\".")
+        return 1
     secure_boot = ReadFile("/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c", binary=True)[4:] == b"\x01"
     setup_mode = ReadFile("/sys/firmware/efi/efivars/SetupMode-8be4df61-93ca-11d2-aa0d-00e098032b8c", binary=True)[4:] == b"\x01"
     if not secure_boot and not setup_mode:
@@ -228,7 +233,7 @@ def Main():
 
     db_esl_path = os.path.join(keys_dir_path, "db.esl")
     RunCommand(f"hash-to-efi-sig-list \"{efi_path}\" \"{db_esl_path}\"")
-    RunCommand(f"cat \"{optrom_esl_path}\" >> \"{db_esl_path}\"")
+    RunCommand(f"cat \"{oprom_esl_path}\" >> \"{db_esl_path}\"")
 
     dbx_payload = b"\x26\x16\xc4\xc1\x4c\x50\x92\x40\xac\xa9\x41\xf9\x36\x93\x43\x28\x4c\x00\x00\x00\x1c\x00\x00\x00\x30\x00\x00\x00\x04\x2c\x70\x81\xcc\x15\x73\x45\xb5\xd4\xc3\xa4\x76\xb6\x35\xdc\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01"
     dbx_esl_path = os.path.join(keys_dir_path, "dbx.esl")
