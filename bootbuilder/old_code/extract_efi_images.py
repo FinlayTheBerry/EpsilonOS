@@ -94,7 +94,7 @@ def ExtractEFIImage(rom_path, efi_image_path):
             raise Exception(f"Invalid PCIR header at {hex(pcir_address)}.")
 
         if pcir.type != 3:
-            offset += pcir.image_length * ROM_BLOCK_SIZE
+            offset += pcir.image_length *- ROM_BLOCK_SIZE
             continue
 
         efi_image_start = offset + header.efi_offset
@@ -111,6 +111,6 @@ def ExtractEFIImage(rom_path, efi_image_path):
 def Main():
     oprom_dir_path = os.path.realpath("./oproms")
     for rom_path in RunCommand(f"find \"{oprom_dir_path}\" -mindepth 1 -maxdepth 1 -type f -name \"*.rom\"", capture=True).splitlines():
-        output_path = rom_path.removesuffix(".rom") + ".efi.img"
+        output_path = rom_path.removesuffix(".rom") + ".efi.compressed"
         ExtractEFIImage(rom_path, output_path)
 Main()

@@ -53,8 +53,8 @@ def DecompressEFIImage(efi_image_path, efi_program_path):
 
 def Main():
     oprom_dir_path = os.path.realpath("./oproms")
-    for efi_image_path in RunCommand(f"find \"{oprom_dir_path}\" -mindepth 1 -maxdepth 1 -type f -name \"*.efi.img\"", capture=True).splitlines():
-        efi_program_path = efi_image_path.removesuffix(".img")
+    for efi_image_path in RunCommand(f"find \"{oprom_dir_path}\" -mindepth 1 -maxdepth 1 -type f -name \"*.efi.compressed\"", capture=True).splitlines():
+        efi_program_path = efi_image_path.removesuffix(".compressed")
         DecompressEFIImage(efi_image_path, efi_program_path)
 Main()
 
