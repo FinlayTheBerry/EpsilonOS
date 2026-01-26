@@ -100,7 +100,7 @@ def main():
     validDrives = [validDrive.strip() for validDrive in validDrives.splitlines() if validDrive.strip()]
     while True:
         print("Select a disk from the list above to install EOS: ", end="")
-        eosDrive = input()
+        eosDrive = "loop0" # input()
         if not eosDrive in validDrives:
             PrintError(f"/dev/{eosDrive} is not a valid disk.")
         elif int(RunCommand(f"blockdev --getsize64 /dev/{eosDrive}", capture=True)) < 4_000_000_000:
@@ -109,7 +109,7 @@ def main():
             break
     print()
 
-    PrintWarning(f"All data on {RunCommand(f"lsblk -d -n -o MODEL,SIZE /dev/{eosDrive}", capture=True)} will be destroyed!")
+    PrintWarning(f"All data on /dev/{eosDrive} {RunCommand(f"lsblk -d -n -o MODEL,SIZE /dev/{eosDrive}", capture=True)} will be destroyed!")
     if not Choice("Are you sure you want to proceed?"):
         print()
         print("Aborting install. Nothing was changed.")
@@ -118,7 +118,8 @@ def main():
     print()
 
     while True:
-        diskPass = input("Please enter your password for disk encryption: ")
+        print("Please enter your password for disk encryption: ", end="")
+        diskPass = "password" # input()
         if diskPass == "":
             PrintError("Disk encryption is required to install EOS and your password may not be blank.")
             continue
@@ -127,7 +128,8 @@ def main():
             if not Choice("Are you sure you want to proceed?"):
                 print("Okay let's start over.")
                 continue
-        diskPassConfirmation = input("Please retype your password for disk encryption to confirm: ")
+        print("Please retype your password for disk encryption to confirm: ", end="")
+        diskPassConfirmation = "password" # input()
         if diskPass != diskPassConfirmation:
             PrintError("Passwords did not match. Let's start over.")
             continue
@@ -144,22 +146,25 @@ def main():
     RunCommand(f"sgdisk --new=0:0:0 --typecode=0:8309 --change-name=0:\"EOS Root\" /dev/{eosDrive}")
     
     print("Setting up disk encryption...")
-    RunCommand(f"cryptsetup luksFormat /dev/{eosDrive}{"p2" if eosDrive.startswith("nvme") else "2"} --type luks2 --cipher aes-xts-plain64 --force-password --hash sha512 --pbkdf argon2id --use-random --batch-mode", input=diskPass) # OPTIONAL: --integrity hmac-sha256
-    RunCommand(f"cryptsetup open /dev/{eosDrive}{"p2" if eosDrive.startswith("nvme") else "2"} new_cryptroot --batch-mode", input=diskPass)
+    RunCommand(f"cryptsetup luksFormat /dev/{eosDrive}{"p2" if eosDrive[-1].isdigit() else "2"} --type luks2 --cipher aes-xts-plain64 --force-password --hash sha512 --pbkdf argon2id --use-random --batch-mode", input=diskPass) # OPTIONAL: --integrity hmac-sha256
+    RunCommand(f"cryptsetup open /dev/{eosDrive}{"p2" if eosDrive[-1].isdigit() else "2"} new_cryptroot --batch-mode", input=diskPass)
 
     print("Creating filesystems...")
-    RunCommand(f"mkfs.fat -F32 -n \"EFI\" -S 4096 /dev/{eosDrive}{"p1" if eosDrive.startswith("nvme") else "1"}")
+    RunCommand(f"mkfs.fat -F32 -n \"EFI\" -S 4096 /dev/{eosDrive}{"p1" if eosDrive[-1].isdigit() else "1"}")
     RunCommand("mkfs.ext4 -q -L \"EOS Root\" -E lazy_journal_init /dev/mapper/new_cryptroot")
     
     print("Mounting filesystems...")
     os.makedirs("/new_root/", exist_ok=True)
     RunCommand("mount /dev/mapper/new_cryptroot /new_root")
     os.makedirs("/new_root/boot", exist_ok=True)
-    RunCommand(f"mount /dev/{eosDrive}{"p1" if eosDrive.startswith("nvme") else "1"} /new_root/boot")
+    RunCommand(f"mount /dev/{eosDrive}{"p1" if eosDrive[-1].isdigit() else "1"} /new_root/boot")
     
+    # Mkswap
+    print(f"Creating swapfile...")
+
     # Genfstab
     print(f"Generating fstab...")
-    bootPartitionUUID = RunCommand(f"blkid -o value -s UUID /dev/{eosDrive}{"p1" if eosDrive.startswith("nvme") else "1"}", capture=True)
+    bootPartitionUUID = RunCommand(f"blkid -o value -s UUID /dev/{eosDrive}{"p1" if eosDrive[-1].isdigit() else "1"}", capture=True)
     rootPartitionUUID = RunCommand("blkid -o value -s UUID /dev/mapper/new_cryptroot", capture=True)
     eosDriveSupportsTrim = ReadFile(f"/sys/block/{eosDrive}/queue/discard_max_bytes").strip() != "0"
     fstab = [
