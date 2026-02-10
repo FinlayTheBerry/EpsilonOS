@@ -1,338 +1,438 @@
 #!/bin/env python
 
-import os
-import sys
 import requests
 import subprocess
+import os
+import sys
+import shutil
+import tty
+import termios
 
+# region EpsilonOS Helpers
 def WriteFile(filePath, contents, binary=False):
-    filePath = os.path.abspath(filePath)
-    dirPath = os.path.dirname(filePath)
-    os.makedirs(dirPath, exist_ok=True)
-    with open(filePath, "wb" if binary else "w", encoding=(None if binary else "UTF-8")) as file:
-        file.write(contents)
+	filePath = os.path.realpath(os.path.expanduser(filePath))
+	os.makedirs(os.path.dirname(filePath), exist_ok=True)
+	with open(filePath, "wb" if binary else "w", encoding=(None if binary else "UTF-8")) as file:
+		file.write(contents)
 def ReadFile(filePath, defaultContents=None, binary=False):
-    filePath = os.path.abspath(filePath)
-    if not os.path.exists(filePath):
-        if defaultContents != None:
-            return defaultContents
-    with open(filePath, "rb" if binary else "r", encoding=(None if binary else "UTF-8")) as file:
-        return file.read()
+	filePath = os.path.realpath(os.path.expanduser(filePath))
+	if not os.path.exists(filePath):
+		if defaultContents != None:
+			return defaultContents
+	with open(filePath, "rb" if binary else "r", encoding=(None if binary else "UTF-8")) as file:
+		return file.read()
+def CreateFile(filePath, contents, mode=0o600, binary=False):
+	filePath = os.path.realpath(os.path.expanduser(filePath))
+	fd = os.open(filePath, os.O_WRONLY | os.O_CREAT, mode)
+	with open(fd, "wb" if binary else "w", encoding=(None if binary else "UTF-8")) as file:
+		file.write(contents)
 def RunCommand(command, echo=False, capture=False, input=None, check=True, env=None):
-    result = subprocess.run(command, capture_output=(not echo), input=input, check=check, shell=True, text=True,)
-    if capture:
-        return result.stdout.strip()
-    else:
-        return result.returncode
+	if echo and capture:
+		raise Exception("Command cannot be run with both echo and capture.")
+	result = subprocess.run(command, stdout=(None if echo else subprocess.PIPE), stderr=(None if echo else subprocess.STDOUT), input=input, env=env, check=False, shell=True, text=True)
+	if check and result.returncode != 0:
+		print(result.stdout)
+		raise Exception(f"Sub-process returned non-zero exit code.\nExitCode: {result.returncode}\nCmdLine: {command}")
+	if capture and not check:
+		return result.stdout.strip(), result.returncode
+	elif capture:
+		return result.stdout.strip()
+	elif not check:
+		return result.returncode
+	else:
+		return
+def PrintWarning(message):
+	print(f"\033[93mWarning: {message}\033[0m")
+def PrintError(message):
+	print(f"\033[91mERROR: {message}\033[0m")
 def Choice(prompt=None):
-    if prompt == None:
-        print("(Y)es or (N)o: ", end="")
-    else:
-        print(f"{prompt} (Y)es/(N)o: ", end="")
-    while True:
-        userChoice = input().lower()
-        if userChoice == "y" or userChoice == "yes" or userChoice == "(y)es":
-            return True
-        elif userChoice == "n" or userChoice == "no" or userChoice == "(n)o":
-            return False
-        else:
-            print(f"{userChoice} is not a valid choice. Please enter (Y)es or (N)o: ")
-RequiredPackageNames = set()
-def RequirePackage(packageName):
-    global RequiredPackageNames
-    RequiredPackageNames.add(packageName)
-def AssertPacmanPacs():
-    global RequiredPackageNames
-    installedPackages = RunCommand("pacman -Qq", capture=True).splitlines()
-    missingPackages = set()
-    for neededPackage in RequiredPackageNames:
-        if not neededPackage in installedPackages:
-            missingPackages.add(neededPackage)
-    if len(missingPackages) > 0:
-        raise Exception(f"Missing needed pacman package/s {" ".join(missingPackages)}")
-def AssertRoot():
-    if RunCommand("id -u", capture=True) != "0" or RunCommand("id -g", capture=True) != "0":
-        raise Exception("The EOS installer must be run as root.")
-def AssertInternet():
-    try:
-        response = requests.get("http://clients3.google.com/generate_204")
-        response.raise_for_status()
-    except:
-        raise Exception("An internet connection is required to install EOS. You may need to setup WiFi.")
-def Assertx64():
-    if RunCommand("uname -m", capture=True).strip() != "x86_64":
-        raise Exception("A 64 bit CPU is required to install EOS.")
-def AssertEfi():
-    if not os.path.isdir("/sys/firmware/efi"):
-        raise Exception("A motherboard with EFI support is required to install EOS. Check if your BIOS is set to legacy CSM mode.")
-def PrintError(message, end=None):
-    print(f"\033[0m\033[31mERROR: {message}\033[0m", end=end)
-def PrintWarning(message, end=None):
-    print(f"\033[0m\033[33mWarning: {message}\033[0m", end=end)
+	print(f"{prompt + " " if prompt != None else ""}(Y)es/(N)o: ", end="")
+	while True:
+		userChoice = input().lower()
+		if userChoice == "y" or userChoice == "yes" or userChoice == "(y)es":
+			return True
+		elif userChoice == "n" or userChoice == "no" or userChoice == "(n)o":
+			return False
+		else:
+			print(f"{userChoice} is not a valid choice. Please enter (Y)es or (N)o: ")
+# endregion
 
-def main():
-    # Initialization and scanity checking
-    RequirePackage("util-linux") # uname id lsblk wipefs mount blockdev
-    RequirePackage("cryptsetup") # cryptsetup
-    RequirePackage("gptfdisk") # sgdisk
-    RequirePackage("dosfstools") # mkfs.fat
-    RequirePackage("e2fsprogs") # mkfs.ext4
-    RequirePackage("arch-install-scripts") # pacstrap arch-chroot
-    AssertPacmanPacs()
-    AssertRoot()
-    Assertx64()
-    AssertEfi()
-    if os.path.ismount("/new_root"):
-        raise Exception("Something is already mounted at /new_root. Please manually unmount.")
-    if os.path.isdir("/new_root") and len(os.listdir("/new_root")) != 0:
-        raise Exception("/new_root already exists and is not empty. Please manually check.")
-    if os.path.exists("/dev/mapper/new_cryptroot"):
-        raise Exception("Something is already open in cryptsetup as new_cryptroot. Please manually close.")
-    AssertInternet()
-    print()
-    print("----- EOS Base Installer v1.1.0 -----")
-    print()
+def input_password():
+	fd = sys.stdin.fileno()
+	oldTtyAttr = termios.tcgetattr(fd)
+	password = ""
+	visible = False
+	try:
+		tty.setraw(fd)
+		while True:
+			oldPassLength = len(password)
+			char = sys.stdin.read(1)	
+			if char == "\n" or char == "\r": # Submit input
+				break
+			elif char == "\t": # Toggle visiblity
+				visible = not visible
+			elif char == "\x7f": # Backspace
+				if len(password) == 0:
+					continue
+				password = password[:-1]
+			elif char.isprintable(): # Character typed
+				password += char
+			else: # Invalid character
+				raise KeyboardInterrupt
+			# Erase the old password by writing over it with spaces
+			sys.stdout.write(("\x08" * oldPassLength) + (" " * oldPassLength) + ("\x08" * oldPassLength))
+			sys.stdout.flush()
+			# Write the new password
+			sys.stdout.write(password if visible else "*" * len(password))
+			sys.stdout.flush()
+	finally:
+		termios.tcsetattr(fd, termios.TCSANOW, oldTtyAttr)
+		print()
+	return password
 
-    # User input for disk, partitions, and filesystems phase of installation
-    print("List of disks:")
-    RunCommand("lsblk -d -n -o NAME,MODEL,SIZE | grep -v \'0B\'", echo=True)
-    validDrives = RunCommand("lsblk -d -n -o NAME,SIZE | grep -v \'0B\' | awk \'{print $1}\'", capture=True)
-    validDrives = [validDrive.strip() for validDrive in validDrives.splitlines() if validDrive.strip()]
-    while True:
-        print("Select a disk from the list above to install EOS: ", end="")
-        eosDrive = "loop0" # input()
-        if not eosDrive in validDrives:
-            PrintError(f"/dev/{eosDrive} is not a valid disk.")
-        elif int(RunCommand(f"blockdev --getsize64 /dev/{eosDrive}", capture=True)) < 4_000_000_000:
-            PrintError(f"/dev/{eosDrive} must have at least 4GB of space to install EOS.")
-        else:
-            break
-    print()
+def Main():
+	# NOTE outdated gpg keys on the host will cause pacstrap to fail.
+	# Run sudo pacman -Sy archlinux-keyring on host to fix.
 
-    PrintWarning(f"All data on /dev/{eosDrive} {RunCommand(f"lsblk -d -n -o MODEL,SIZE /dev/{eosDrive}", capture=True)} will be destroyed!")
-    if not Choice("Are you sure you want to proceed?"):
-        print()
-        print("Aborting install. Nothing was changed.")
-        print()
-        sys.exit(1)
-    print()
+	# Initialization and scanity checking
+	ignoreScanityFailures = False
+	DEPENDENCIES = [
+		("uname", "util-linux"),
+		("id", "util-linux"),
+		("lsblk", "util-linux"),
+		("wipefs", "util-linux"),
+		("mount", "util-linux"),
+		("blockdev", "util-linux"),
+		("cryptsetup", "base"),
+		("sgdisk", "gptfdisk"),
+		("mkfs.fat", "dosfstools"),
+		("mkfs.ext4", "e2fsprogs"),
+		("pacstrap", "arch-install-scripts"),
+		("arch-chroot", "arch-install-scripts"),
+		("ping", "iputils"),
+		("curl", "curl")
+	]
+	if os.geteuid() != 0 or os.getegid() != 0:
+		PrintError(f"Root is required to run eos_install. Try sudo eos_install.")
+		if not ignoreScanityFailures:
+			return 1
+	for dep, pac in DEPENDENCIES:
+		if shutil.which(dep) == None:
+			PrintError(f"Unable to locate required dependency {dep}. Try pacman -Syu {pac}.")
+			if not ignoreScanityFailures:
+				return 1
+	if not os.path.ismount("/sys"):
+		PrintError("Nothing is mounted on /sys. IntegraBoot requires SysFs.")
+		if not ignoreScanityFailures:
+			return 1
+	if not os.path.ismount("/proc"):
+		PrintError("Nothing is mounted on /proc. IntegraBoot requires Proc.")
+		if not ignoreScanityFailures:
+			return 1
+	if not os.path.ismount("/dev"):
+		PrintError("Nothing is mounted on /dev. IntegraBoot requires DevTmpFs.")
+		if not ignoreScanityFailures:
+			return 1
+	cpuinfo = ReadFile("/proc/cpuinfo").replace("\t", "")
+	if not "lm" in cpuinfo[cpuinfo.find("\nflags:") + len("\nflags:"):].splitlines()[0].strip().split(" "):
+		PrintError("EpsilonOS requires an x86-64 CPU.")
+		if not ignoreScanityFailures:
+			return 1
+	if ReadFile("/sys/class/tpm/tpm0/tpm_version_major", defaultContents="").strip() != "2":
+		PrintError("EpsilonOS requires a motherboard with a TPM2 chip.")
+		if not ignoreScanityFailures:
+			return 1
+	if not os.path.exists("/sys/firmware/efi"):
+		PrintError("EpsilonOS requires a UEFI motherboard. Double check that your system is not booted in CSM mode.")
+		if not ignoreScanityFailures:
+			return 1
+	if os.path.ismount("/new_root"):
+		PrintError("Something is already mounted at /new_root. Please manually unmount.")
+		if not ignoreScanityFailures:
+			return 1
+	if os.path.isdir("/new_root") and len(os.listdir("/new_root")) != 0:
+		PrintError("/new_root already exists and is not empty. Please manually check.")
+		if not ignoreScanityFailures:
+			return 1
+	if os.path.exists("/dev/mapper/new_cryptroot"):
+		PrintError("Something is already open in cryptsetup as new_cryptroot. Please manually close.")
+		if not ignoreScanityFailures:
+			return 1
+	if RunCommand("ping -c 1 1.1.1.1", check=False) != 0:
+		PrintError("An internet connection is required to run eos_install. You may need to setup WiFi with iwctl.")
+		if not ignoreScanityFailures:
+			return 1
+	print()
+	print("----- EpsilonOS Installer v1.1.0 -----")
+	print()
 
-    while True:
-        print("Please enter your password for disk encryption: ", end="")
-        diskPass = "password" # input()
-        if diskPass == "":
-            PrintError("Disk encryption is required to install EOS and your password may not be blank.")
-            continue
-        if len(diskPass) < 16:
-            PrintWarning(f"A password of length 16 or greater is highly recommended but yours is only {len(diskPass)}.")
-            if not Choice("Are you sure you want to proceed?"):
-                print("Okay let's start over.")
-                continue
-        print("Please retype your password for disk encryption to confirm: ", end="")
-        diskPassConfirmation = "password" # input()
-        if diskPass != diskPassConfirmation:
-            PrintError("Passwords did not match. Let's start over.")
-            continue
-        break
-    print()
+	# Offline install options
+	installTarget = "/dev/loop0"
+	password = "password"
+	pin = "123456"
 
-    # Disk, partition, filesystem, and encryption setup
-    print("Creating new GPT partition table...")
-    RunCommand(f"wipefs -a /dev/{eosDrive}")
-    RunCommand(f"sgdisk --clear /dev/{eosDrive}")
+	# User input for disk, partitions, and filesystems phase of installation
+	if installTarget == None:
+		print("List of disks:")
+		RunCommand("lsblk -d -n -o NAME,MODEL,SIZE | grep -v \'0B\'", echo=True)
+		validDrives = RunCommand("lsblk -d -n -o NAME,SIZE | grep -v \'0B\' | awk \'{print \"/dev/\"$1}\'", capture=True).splitlines()
+		while True:
+			print("Select a disk from the list above to install EpsilonOS: ", end="")
+			installTarget = input()
+			if not installTarget.startswith("/"):
+				installTarget = f"/dev/{installTarget}"
+			if not installTarget in validDrives:
+				PrintError(f"{installTarget} is not a valid disk.")
+			elif int(RunCommand(f"blockdev --getsize64 \"{installTarget}\"", capture=True)) < 4_000_000_000:
+				PrintError(f"{installTarget} must be at least 4GB in size to install EpsilonOS.")
+			else:
+				PrintWarning(f"All data on {installTarget} {RunCommand(f"lsblk -d -n -o MODEL,SIZE \"{installTarget}\"", capture=True)} will be destroyed!")
+				if not Choice("Are you sure you want to proceed?"):
+					print("Aborting install. Nothing was changed.")
+				else:
+					break
+		print()
 
-    print("Creating partitions...")
-    RunCommand(f"sgdisk --new=0:0:+512M --typecode=0:EF00 --change-name=0:\"EOS EFI Partition\" /dev/{eosDrive}")
-    RunCommand(f"sgdisk --new=0:0:0 --typecode=0:8309 --change-name=0:\"EOS Root\" /dev/{eosDrive}")
-    
-    print("Setting up disk encryption...")
-    RunCommand(f"cryptsetup luksFormat /dev/{eosDrive}{"p2" if eosDrive[-1].isdigit() else "2"} --type luks2 --cipher aes-xts-plain64 --force-password --hash sha512 --pbkdf argon2id --use-random --batch-mode", input=diskPass) # OPTIONAL: --integrity hmac-sha256
-    RunCommand(f"cryptsetup open /dev/{eosDrive}{"p2" if eosDrive[-1].isdigit() else "2"} new_cryptroot --batch-mode", input=diskPass)
+	if password == None:
+		while True:
+			print("Input a strong password for your account (at least 16 characters): ", end="")
+			password = input_password()
+			if len(password) < 16:
+				PrintError(f"A password length of 16 or greater is required for security.")
+			else:
+				print("Please retype your password: ", end="")
+				passwordConfirmation = input_password()
+				if password != passwordConfirmation:
+					PrintError("Passwords did not match.")
+				else:
+					break
+		print()
 
-    print("Creating filesystems...")
-    RunCommand(f"mkfs.fat -F32 -n \"EFI\" -S 4096 /dev/{eosDrive}{"p1" if eosDrive[-1].isdigit() else "1"}")
-    RunCommand("mkfs.ext4 -q -L \"EOS Root\" -E lazy_journal_init /dev/mapper/new_cryptroot")
-    
-    print("Mounting filesystems...")
-    os.makedirs("/new_root/", exist_ok=True)
-    RunCommand("mount /dev/mapper/new_cryptroot /new_root")
-    os.makedirs("/new_root/boot", exist_ok=True)
-    RunCommand(f"mount /dev/{eosDrive}{"p1" if eosDrive[-1].isdigit() else "1"} /new_root/boot")
-    
-    # Mkswap
-    print(f"Creating swapfile...")
+	if pin == None:
+		while True:
+			print("Input a pin for your account (6 digits recommended): ", end="")
+			pin = input_password()
+			print("Please retype your pin: ", end="")
+			pinConfirmation = input_password()
+			if pin != pinConfirmation:
+				PrintError("Pins did not match.")
+			else:
+				break
+		print()
 
-    # Genfstab
-    print(f"Generating fstab...")
-    bootPartitionUUID = RunCommand(f"blkid -o value -s UUID /dev/{eosDrive}{"p1" if eosDrive[-1].isdigit() else "1"}", capture=True)
-    rootPartitionUUID = RunCommand("blkid -o value -s UUID /dev/mapper/new_cryptroot", capture=True)
-    eosDriveSupportsTrim = ReadFile(f"/sys/block/{eosDrive}/queue/discard_max_bytes").strip() != "0"
-    fstab = [
-        "# <partition> <mount point> <filesystem type> <options> <dump> <pass>",
-        "",
-        "# EOS Root",
-        f"UUID={rootPartitionUUID} / ext4 rw,noatime,errors=remount-ro{",discard" if eosDriveSupportsTrim else ""} 0 1",
-        "",
-        "# EOS EFI Partition",
-        f"UUID={bootPartitionUUID} /boot vfat rw,noatime,errors=remount-ro,uid=0,gid=0,dmask=0077,fmask=0177,codepage=437,iocharset=ascii,shortname=mixed,utf8{",discard" if eosDriveSupportsTrim else ""} 0 2",
-    ]
-    os.makedirs("/new_root/etc/", exist_ok=True)
-    WriteFile("/new_root/etc/fstab", "\n".join(fstab))
-    print()
+	# Disk, partition, filesystem, and encryption setup
+	print("Creating new GPT partition table...")
+	RunCommand(f"wipefs -a \"{installTarget}\"")
+	RunCommand(f"sgdisk --clear \"{installTarget}\"")
 
-    # Pacstrap base system install
-    print("Installing base system... (This will take a very long time.)")
-    RunCommand("pacstrap /new_root base linux linux-firmware --noconfirm", echo=True)
-    print("Installed base system.")
-    print()
+	print("Creating partitions...")
+	RunCommand(f"sgdisk --new=0:0:+512M --typecode=0:EF00 --change-name=0:\"EpsilonOS EFI Partition\" \"{installTarget}\"")
+	RunCommand(f"sgdisk --new=0:0:0 --typecode=0:8309 --change-name=0:\"EpsilonOS Root\" \"{installTarget}\"")
+	RunCommand(f"partprobe \"{installTarget}\"")
+	
+	print("Setting up disk encryption...")
+	RunCommand(f"cryptsetup luksFormat \"{installTarget}{"p2" if installTarget[-1].isdigit() else "2"}\" --type luks2 --cipher aes-xts-plain64 --force-password --hash sha512 --pbkdf argon2id --use-random --batch-mode", input=password) # OPTIONAL: --integrity hmac-sha256
+	RunCommand(f"cryptsetup open \"{installTarget}{"p2" if installTarget[-1].isdigit() else "2"}\" new_cryptroot --batch-mode", input=password)
 
-    # DONT FORGET TO CREATE SOME SWAP
-    # for example a swap file can be created like this
-    # fallocate -l 64G /swapfile
-    # sudo chmod 600 /swapfile
-    # sudo chown +0:+0 /swapfile
-    # sudo mkswap /swapfile
-    # sudo swapon /swapfile
+	print("Creating filesystems...")
+	RunCommand(f"mkfs.fat -F32 -n \"EFI\" -S 4096 \"{installTarget}{"p1" if installTarget[-1].isdigit() else "1"}\"")
+	RunCommand("mkfs.ext4 -q -L \"EOS Root\" -E lazy_journal_init /dev/mapper/new_cryptroot")
+	
+	print("Mounting filesystems...")
+	os.makedirs("/new_root/", exist_ok=True)
+	RunCommand("mount /dev/mapper/new_cryptroot /new_root")
+	os.makedirs("/new_root/boot", exist_ok=True)
+	RunCommand(f"mount \"{installTarget}{"p1" if installTarget[-1].isdigit() else "1"}\" /new_root/boot")	
 
-    return
+	# Pacstrap base system install
+	print("Installing base system... (This will take a very long time.)")
+	RunCommand("pacstrap /new_root base linux linux-firmware --noconfirm", echo=True)
+	print()
+
+	# Mkswap
+	print(f"Not Creating swapfile due to insufficient space...")
+	RunCommand("fallocate -l 4G /new_root/swapfile")
+	RunCommand("chown +0:+0 /new_root/swapfile")
+	RunCommand("chmod 0600 /new_root/swapfile")
+	RunCommand("mkswap /new_root/swapfile")
+
+	# Genfstab
+	print(f"Generating fstab...")
+	bootPartitionUUID = RunCommand(f"blkid -o value -s UUID \"{installTarget}{"p1" if installTarget[-1].isdigit() else "1"}\"", capture=True)
+	rootPartitionUUID = RunCommand("blkid -o value -s UUID /dev/mapper/new_cryptroot", capture=True)
+	eosDriveSupportsTrim = ReadFile(f"/sys/block/{os.path.basename(installTarget)}/queue/discard_max_bytes").strip() != "0"
+	fstab = "\n".join([
+		f"# EpsilonOS Root",
+		f"UUID={rootPartitionUUID} / ext4 rw,noatime,errors=remount-ro{",discard" if eosDriveSupportsTrim else ""} 0 1",
+		f"",
+		f"# EpsilonOS EFI Partition",
+		f"UUID={bootPartitionUUID} /boot vfat rw,noatime,errors=remount-ro,uid=0,gid=0,dmask=0077,fmask=0177,codepage=437,iocharset=ascii,shortname=mixed,utf8{",discard" if eosDriveSupportsTrim else ""} 0 2",
+		f"",
+		f"# EpsilonOS Swap" if os.path.exists("/new_root/swapfile") else "",
+		f"/swapfile swap swap sw 0 0" if os.path.exists("/new_root/swapfile") else "",
+	]) + "\n"
+	WriteFile("/new_root/etc/fstab", fstab)
+	RunCommand("chown +0:+0 /new_root/etc/fstab")
+	RunCommand("chmod 0644 /new_root/etc/fstab")
+	print()
+
+	print("Installing IntegraBoot...")
+	RunCommand("curl -L https://github.com/FinlayTheBerry/IntegraBoot/releases/latest/download/integraboot.py -o /new_root/usr/bin/integraboot")
+	RunCommand("chown +0:+0 /new_root/usr/bin/integraboot")
+	RunCommand("chmod 0755 /new_root/usr/bin/integraboot")
+	RunCommand("mkdir -p /new_root/var/lib/integraboot")
+	RunCommand("chown +0:+0 /new_root/var/lib/integraboot")
+	RunCommand("chmod 0700 /new_root/var/lib/integraboot")
+	RunCommand("curl -L https://github.com/FinlayTheBerry/IntegraBoot/releases/latest/download/integrastub.efi -o /new_root/var/lib/integraboot/integrastub.efi")
+	RunCommand("chown +0:+0 /new_root/var/lib/integraboot/integrastub.efi")
+	RunCommand("chmod 0400 /new_root/var/lib/integraboot/integrastub.efi")
+	RunCommand("pacstrap /new_root python efibootmgr efitools --noconfirm", echo=True)
+	print()
+
+	print("Running IntegraBoot...")
+	RunCommand("arch-chroot /new_root integraboot", echo=True)
+	print()
+
+	# Set local timezone to UTC. In the future we should ask the user to choose.
+	RunCommand(f"ln -sf /new_root/usr/share/zoneinfo/UTC /new_root/etc/localtime")
+
+	# Set the locale to en_US UTF-8. In the future we should ask the user to choose.
+	WriteFile("/new_root/etc/locale.gen", "en_US.UTF-8 UTF-8")
+	RunCommand(f"arch-chroot /new_root locale-gen")
+
+	# Enable to systemd timesync service and update the time
+	RunCommand("arch-chroot /new_root systemctl enable systemd-timesyncd")
+	RunCommand("arch-chroot /new_root timedatectl set-ntp true")
+	RunCommand("arch-chroot /new_root timedatectl set-local-rtc 0 --adjust-system-clock")
+
+	# Set the hostname
+	WriteFile("/new_root/etc/hostname", "EpsilonOS")
+
+	# Lock the root user for normal login (sudo is the only way)
+	RunCommand(f"arch-chroot /new_root usermod -p \'!*\' root")
+	RunCommand(f"arch-chroot /new_root usermod -s /usr/bin/nologin root")
+
+	# Create the user and set their password and assign them membership in wheel
+	RunCommand(f"arch-chroot /new_root useradd -m -G wheel -c Epsilon epsilon")
+	RunCommand(f"arch-chroot /new_root bash -c \'echo \'\\\'\'epsilon:{password.replace("\'", "\'\\\'\'")}\'\\\'\' | chpasswd\'")
+	RunCommand(f"arch-chroot /new_root chage -m -1 -M -1 -W -1 -I -1 -E \"\" epsilon")
+	
+	# Install sudo and setup the sudoers file and faillock.conf
+	RunCommand("pacstrap /new_root sudo --noconfirm", echo=True)
+	sudoers = "\n".join([
+		f"Defaults!/usr/bin/visudo env_keep += \"SUDO_EDITOR EDITOR VISUAL\"",
+		f"Defaults secure_path=\"/usr/local/sbin:/usr/local/bin:/usr/bin\"",
+		f"Defaults timestamp_timeout=0",
+		f"root ALL=(ALL:ALL) ALL",
+		f"%wheel ALL=(ALL:ALL) ALL",
+	]) + "\n"
+	WriteFile("/new_root/etc/sudoers", sudoers)
+	RunCommand("chown +0:+0 /new_root/etc/sudoers")
+	RunCommand("chmod 0400 /new_root/etc/sudoers")
+	RunCommand("mkdir -p /new_root/etc/security")
+	RunCommand("chown +0:+0 /new_root/etc/security")
+	RunCommand("chmod 0755 /new_root/etc/security")
+	WriteFile("/new_root/etc/security/faillock.conf", "nodelay")
+	RunCommand("chown +0:+0 /new_root/etc/security/faillock.conf")
+	RunCommand("chmod 0644 /new_root/etc/security/faillock.conf")
+
+	# Set default target to multi user target
+	RunCommand("arch-chroot /new_root systemctl set-default multi-user.target")
+
+	# Setup networkd and resolved
+	RunCommand(f"arch-chroot /new_root systemctl enable systemd-networkd.service")
+	RunCommand(f"arch-chroot /new_root systemctl enable systemd-resolved.service")
+	RunCommand("mkdir -p /new_root/etc/systemd")
+	RunCommand("chown +0:+0 /new_root/etc/systemd")
+	RunCommand("chmod 755 /new_root/etc/systemd")
+	RunCommand("mkdir -p /new_root/etc/systemd/network")
+	RunCommand("chown +0:+0 /new_root/etc/systemd/network")
+	RunCommand("chmod 755 /new_root/etc/systemd/network")
+	DefaultDotNetwork = "\n".join([
+		f"[Match]",
+		f"Name=en* wl* ww*",
+		f"",
+		f"[Network]",
+		f"DHCP=yes",
+		f"IPv6PrivacyExtensions=yes",
+		f"LLDP=no",
+		f"",
+		f"[DHCP]",
+		f"UseDNS=no",
+		f"UseHostname=no",
+		f"UseDomains=no",
+		f"UseRoutes=yes",
+	]) + "\n"
+	WriteFile("/new_root/etc/systemd/network/default.network", DefaultDotNetwork)
+	RunCommand("chown +0:+0 /new_root/etc/systemd/network/default.network")
+	RunCommand("chmod 644 /new_root/etc/systemd/network/default.network")
+	ResolvedDotConf = "\n".join([
+		"[Resolve]",
+		"DNS=194.242.2.2#dns.mullvad.net 2a07:e340::2#dns.mullvad.net",
+		"FallbackDNS=",
+		"DNSSEC=yes",
+		"DNSOverTLS=yes",
+		"MulticastDNS=no",
+		"LLMNR=no",
+		"Cache=yes",
+		"CacheFromLocalhost=no",
+		"DNSStubListener=yes",
+		"ReadEtcHosts=yes",
+		"ResolveUnicastSingleLabel=no",
+		"StaleRetentionSec=0",
+	]) + "\n"
+	WriteFile("/new_root/etc/systemd/resolved.conf", ResolvedDotConf)
+	RunCommand("chown +0:+0 /new_root/etc/systemd/resolved.conf")
+	RunCommand("chmod 644 /new_root/etc/systemd/resolved.conf")
+
+	# Install sddm
+	RunCommand("pacstrap /new_root sddm --noconfirm", echo=True)
+	RunCommand("arch-chroot /new_root systemctl enable sddm.service")
+	RunCommand("mkdir -p /new_root/etc/sddm.conf.d")
+	RunCommand("chown +0:+0 /new_root/etc/sddm.conf.d")
+	RunCommand("chmod 755 /new_root/etc/sddm.conf.d")
+	NumlockDotConf = "\n".join([
+		f"[General]",
+		f"Numlock=on",
+	]) + "\n"
+	WriteFile("/new_root/etc/sddm.conf.d/numlock.conf", NumlockDotConf)
+	RunCommand("chown +0:+0 /new_root/etc/sddm.conf.d/numlock.conf")
+	RunCommand("chmod 644 /new_root/etc/sddm.conf.d/numlock.conf")
+	AutoLoginDotConf = "\n".join([
+		f"[Autologin]",
+		f"Relogin=false",
+		f"Session=plasma.desktop",
+		f"User=epsilon",
+	]) + "\n"
+	WriteFile("/new_root/etc/sddm.conf.d/auto_login.conf", AutoLoginDotConf)
+	RunCommand("chown +0:+0 /new_root/etc/sddm.conf.d/auto_login.conf")
+	RunCommand("chmod 644 /new_root/etc/sddm.conf.d/auto_login.conf")
+
+	# Set the default target to the graphical target
+	RunCommand("arch-chroot /new_root systemctl set-default graphical.target")
+
+	# Install KDE Plasma
+	RunCommand("pacstrap /new_root plasma-desktop sddm-kcm plasma-workspace qt6-wayland --noconfirm", echo=True)
+
+	# Unmount /new_root
+	RunCommand("umount /new_root/boot")
+	RunCommand("umount /new_root")
+	RunCommand("cryptsetup close new_cryptroot")
+
+	print(f"Success! EpsilonOS has been installed onto {installTarget}.")
+sys.exit(Main())
 
 
-    # Guess and set the user's timezone
-    try:
-        response = requests.get("https://ipapi.co/timezone/")
-        response.raise_for_status()
-        timezone = response.text.strip()
-    except:
-        print(f"\033[0m\033[33mWARNING: Internet is required to auto set your timezone. Defaulting to UTC.\033[0m")
-        timezone = "UTC"
-    RunCommand(f"ln -sf /new_root/usr/share/zoneinfo/{timezone} /new_root/etc/localtime")
-    
-    # Guess and set the user's locale
-    try:
-        response = requests.get("https://ipapi.co/languages/")
-        response.raise_for_status()
-        language = response.text.strip()
-    except:
-        print(f"\033[0m\033[33mWARNING: Internet is required to auto set your locale. Defaulting to en_US.\033[0m")
-        language = "en_US"
-    if "," in language: language = language[0:language.index(",")]
-    language = language.replace("-", "_")
-    bestLocale = "es_US.UTF-8 UTF-8"
-    with open("/new_root/usr/share/i18n/SUPPORTED", "r", encoding="UTF-8") as supportedLocalesFile:
-        locales = [locale.strip() for locale in supportedLocalesFile.readlines()]
-        for locale in locales:
-            langMatch = language in locale
-            bestLangMatch = language in bestLocale
-            charsetMatch = "UTF-8" in locale
-            bestCharsetMatch = "UTF-8" in bestLocale
-            if langMatch and not bestLangMatch:
-                bestLocale = locale
-            if langMatch and charsetMatch and not bestCharsetMatch:
-                bestLocale = locale
-    WriteFile("/new_root/etc/locale.gen", bestLocale)
-    RunCommand(f"arch-chroot /new_root locale-gen")
-    
-    # Update the system time and set the timedate service to localtime
-    RunCommand("arch-chroot /new_root systemctl enable systemd-timesyncd")
-    RunCommand("arch-chroot /new_root timedatectl set-ntp true")
-    RunCommand("arch-chroot /new_root timedatectl set-local-rtc 1 --adjust-system-clock")
 
-    # Set the hostname of the new system
-    WriteFile("/new_root/etc/hostname", "EOS")
 
-    # Setup root account
-    RunCommand(f"arch-chroot /new_root usermod -p \'!*\' root")
-    RunCommand(f"arch-chroot /new_root usermod -s /usr/bin/nologin root")
 
-    # Setup user account
-    username = input("Please input your username: ")
-    password = input("Please input your password: ")
-    password = password.replace("\'", "\'\\\'\'")
-    if ":" in username:
-        raise Exception("Usernames may not contain colons :")
-    RunCommand(f"arch-chroot /new_root useradd -m -G wheel {username}")
-    RunCommand(f"arch-chroot /new_root echo '{username}:{password}' | chpasswd")
-    RunCommand(f"arch-chroot /new_root chage -m -1 -M -1 -W -1 -I -1 -E \"\" \'{username}\'")
-    
-    # Set sudoers file
-    sudoers = """Defaults!/usr/bin/visudo env_keep += "SUDO_EDITOR EDITOR VISUAL"
-Defaults secure_path="/usr/local/sbin:/usr/local/bin:/usr/bin"
-Defaults timestamp_timeout=0
-Defaults requiretty
-Defaults env_reset
-Defaults always_set_home
 
-%wheel ALL=(ALL:ALL) ALL
-root ALL=(ALL:ALL) ALL
+
+
+
+
+
 """
-    WriteFile("/new_root/etc/sudoers", sudoers)
-    os.chmod("/new_root/etc/sudoers", 0o440)
-    os.chown("/new_root/etc/sudoers", 0, 0)
-
-    # Setup networkd and resolved
-    RunCommand(f"arch-chroot /new_root systemctl enable systemd-networkd.service")
-    RunCommand(f"arch-chroot /new_root systemctl enable systemd-resolved.service")
-    eosDotNetwork = """[Match]
-Name=en* wl* ww*
-
-[Network]
-DHCP=yes
-IPv6PrivacyExtensions=yes
-LLDP=no
-
-[DHCP]
-UseDNS=no
-UseHostname=no
-UseDomains=no
-UseRoutes=yes"""
-    WriteFile("/new_root/etc/systemd/network/eos.network", eosDotNetwork)
-    resolvedDotConf = """[Resolve]
-DNS=1.1.1.1 1.0.0.1
-FallbackDNS=2606:4700:4700::1111 2606:4700:4700::1001
-DNSSEC=yes
-DNSOverTLS=yes
-MulticastDNS=no
-LLMNR=no
-Cache=yes
-CacheFromLocalhost=no
-DNSStubListener=yes
-ReadEtcHosts=yes
-ResolveUnicastSingleLabel=no
-StaleRetentionSec=0"""
-    WriteFile("/etc/systemd/resolved.conf", resolvedDotConf)
-
-try:
-    main()
-except Exception as ex:
-    print()
-    PrintError(ex)
-    print()
-    sys.exit(1)
-
-"""
-# -- Setting up wifi for live cd (optional) --
-# First scan for wifi adaperts
-iwctl device list
-
-# Then scan for wifi networks
-iwctl station wlan0 scan
-iwctl station wlan0 get-networks
-
-# Then connect to a wifi network
-iwctl station wlan0 connect FinFi
-
-# Then test
-iwctl station wlan0 show
-ping google.com
-
-
-
-# -- Installing Base System --
-# Keyring Troubleshooting (optional)
-# If you try the steps below and get keyring related errors then try this
-pacman-key --init
-pacman-key --populate archlinux
-
 # Next we install other useful tools (optional)
 pacstrap /mnt nano sudo base-devel git
 
@@ -344,24 +444,6 @@ pacstrap /mnt iwd
 # You should only do this if you installed iwd with pacstrap earlier
 systemctl enable iwd
 
-# Next set the default boot target
-ln -sf /usr/lib/systemd/system/multi-user.target /etc/systemd/system/default.target
-
-# -- Bootloader (SystemDBoot) (from chroot) --
-# First install systemd boot
-bootctl install
-
-# Next set general systemd boot settings
-echo -e "default arch" > /boot/loader/loader.conf
-echo -e "timeout 0" >> /boot/loader/loader.conf
-echo -e "editor 0" >> /boot/loader/loader.conf
-
-# Next create arch linux systemd boot entry
-echo -e "title Arch Linux" > /boot/loader/entries/arch.conf
-echo -e "linux /vmlinuz-linux" >> /boot/loader/entries/arch.conf
-echo -e "initrd /initramfs-linux.img" >> /boot/loader/entries/arch.conf
-echo -e "options cryptdevice=UUID=$(blkid -o value -s UUID /dev/sda1):cryptroot root=/dev/mapper/cryptroot rw" >> /boot/loader/entries/arch.conf # If encrypted
-echo -e "options root=/dev/sda1 rw" >> /boot/loader/entries/arch.conf # If unencrypted
 
 # Next install yay manually (optional)
 mkdir /yay
@@ -377,11 +459,11 @@ rm -rf /yay
 # Next set the yay config (optional)
 su finlaytheberry
 echo -e "{" > ~/.config/yay/config.json
-echo -e "    "buildDir": "/tmp/yay"," >> ~/.config/yay/config.json
-echo -e "    "cleanBuild": false," >> ~/.config/yay/config.json
-echo -e "    "diffmenu": false," >> ~/.config/yay/config.json
-echo -e "    "editmenu": false," >> ~/.config/yay/config.json
-echo -e "    "noconfirm": true" >> ~/.config/yay/config.json
+echo -e "	"buildDir": "/tmp/yay"," >> ~/.config/yay/config.json
+echo -e "	"cleanBuild": false," >> ~/.config/yay/config.json
+echo -e "	"diffmenu": false," >> ~/.config/yay/config.json
+echo -e "	"editmenu": false," >> ~/.config/yay/config.json
+echo -e "	"noconfirm": true" >> ~/.config/yay/config.json
 echo -e "}" >> ~/.config/yay/config.json
 exit
 
@@ -389,14 +471,6 @@ exit
 su finlaytheberry
 yay -S mkinitcpio-numlock
 exit
-
-# Set systemd boot hooks and regenerate initramfs
-echo -e "MODULES=()" > /etc/mkinitcpio.conf
-echo -e "BINARIES=()" >> /etc/mkinitcpio.conf
-echo -e "FILES=()" >> /etc/mkinitcpio.conf
-echo -e "HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont numlock block encrypt filesystem fsck)" >> /etc/mkinitcpio.conf # If you want numlock
-echo -e "HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt filesystem fsck)" >> /etc/mkinitcpio.conf # If you dont want numlock
-mkinitcpio -P
 
 # -- Setting up wifi (optional) --
 # If you need to setup wifi 
@@ -410,17 +484,6 @@ iwctl station wlan0 get-networks
 # Then connect to a wifi network
 iwctl station wlan0 connect FinFi
 
-# Then test
-iwctl station wlan0 show
-ping google.com
-
-# Then enable DHCP
-echo -e "[Match]" > /etc/systemd/network/default.network
-echo -e "Name=*" >> /etc/systemd/network/default.network
-echo -e "" >> /etc/systemd/network/default.network
-echo -e "[Network]" >> /etc/systemd/network/default.network
-echo -e "DHCP=yes" >> /etc/systemd/network/default.network
-
 # -- Setting the fastest mirrors (optional) --
 yay -S reflector
 sudo reflector --country "United States" --age 48 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
@@ -429,17 +492,10 @@ sudo reflector --country "United States" --age 48 --protocol https --sort rate -
 # First install the programs needed for kde plasma desktop
 yay -S sddm plasma-desktop sddm-kcm plasma-workspace qt6-wayland
 # Next enable and configure sddm
-sudo systemctl enable sddm
-sudo echo -e "[Theme]" > /etc/sddm.conf
-sudo echo -e "Current=breeze" >> /etc/sddm.conf
-# Next enable numlock in sddm while we are here (optional)
-sudo echo -e "" >> /etc/sddm.conf
-sudo echo -e "[General]" >> /etc/sddm.conf
-sudo echo -e "Numlock=on" >> /etc/sddm.conf
+
 # Next restart sddm after updating sddm.conf
 sudo systemctl restart sddm
 # Finally set the boot target to graphical.target and reboot
-sudo ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
 sudo reboot
 
 # -- Audio Setup --
