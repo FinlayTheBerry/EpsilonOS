@@ -5,8 +5,6 @@ import subprocess
 import os
 import sys
 import shutil
-import tty
-import termios
 
 # region EpsilonOS Helpers
 def WriteFile(filePath, contents, binary=False):
@@ -56,39 +54,6 @@ def Choice(prompt=None):
 		else:
 			print(f"{userChoice} is not a valid choice. Please enter (Y)es or (N)o: ")
 # endregion
-
-def input_password():
-	fd = sys.stdin.fileno()
-	oldTtyAttr = termios.tcgetattr(fd)
-	password = ""
-	visible = False
-	try:
-		tty.setraw(fd)
-		while True:
-			oldPassLength = len(password)
-			char = sys.stdin.read(1)	
-			if char == "\n" or char == "\r": # Submit input
-				break
-			elif char == "\t": # Toggle visiblity
-				visible = not visible
-			elif char == "\x7f": # Backspace
-				if len(password) == 0:
-					continue
-				password = password[:-1]
-			elif char.isprintable(): # Character typed
-				password += char
-			else: # Invalid character
-				raise KeyboardInterrupt
-			# Erase the old password by writing over it with spaces
-			sys.stdout.write(("\x08" * oldPassLength) + (" " * oldPassLength) + ("\x08" * oldPassLength))
-			sys.stdout.flush()
-			# Write the new password
-			sys.stdout.write(password if visible else "*" * len(password))
-			sys.stdout.flush()
-	finally:
-		termios.tcsetattr(fd, termios.TCSANOW, oldTtyAttr)
-		print()
-	return password
 
 def Main():
 	# NOTE outdated gpg keys on the host will cause pacstrap to fail.
@@ -166,83 +131,148 @@ def Main():
 	print("----- EpsilonOS Installer v1.1.0 -----")
 	print()
 
-	# Offline install options
-	installTarget = "/dev/loop0"
-	password = "password"
-	pin = "123456"
 
-	# User input for disk, partitions, and filesystems phase of installation
-	if installTarget == None:
-		print("List of disks:")
-		RunCommand("lsblk -d -n -o NAME,MODEL,SIZE | grep -v \'0B\'", echo=True)
-		validDrives = RunCommand("lsblk -d -n -o NAME,SIZE | grep -v \'0B\' | awk \'{print \"/dev/\"$1}\'", capture=True).splitlines()
-		while True:
-			print("Select a disk from the list above to install EpsilonOS: ", end="")
-			installTarget = input()
-			if not installTarget.startswith("/"):
-				installTarget = f"/dev/{installTarget}"
-			if not installTarget in validDrives:
-				PrintError(f"{installTarget} is not a valid disk.")
-			elif int(RunCommand(f"blockdev --getsize64 \"{installTarget}\"", capture=True)) < 4_000_000_000:
-				PrintError(f"{installTarget} must be at least 4GB in size to install EpsilonOS.")
-			else:
-				PrintWarning(f"All data on {installTarget} {RunCommand(f"lsblk -d -n -o MODEL,SIZE \"{installTarget}\"", capture=True)} will be destroyed!")
-				if not Choice("Are you sure you want to proceed?"):
-					print("Aborting install. Nothing was changed.")
-				else:
-					break
+
+	# offline.conf template and parsing
+	if not os.path.isfile("./offline.conf"):
+		offlineDotConf = "\n".join([
+			"# Sets the drive where EpsilonOS should be installed. (e.g. /dev/sda)",
+			"rootDrive=",
+			"",
+			"# Sets a secondary drive where the efi system partition should be placed. (e.g. /dev/sdb)",
+			"# Leave this field blank to place the efi system partition on the rootDrive.",
+			"efiDrive=",
+			"",
+			"# Sets the disk encryption password for the rootDrive. A password of at least 16 characters in length is strongly recommended.",
+			"password=",
+			"",
+			"# Sets the account password for your user account. A 6 digit pin should be sufficient however a longer password can be used.",
+			"# After 5 incorrect login attempts your user account will be locked. This is to prevent brute force attacks.",
+			"# You can use your disk encryption password to unlock your user account if it becomes locked using unlockctl.",
+			"pin=",
+			"",
+			"# If ttyOnly=True then after booting up you will be presented with a command line only.",
+			"# If ttyOnly=False then the KDE Plasma desktop will be installed with the SDDM login manager.",
+			"# If you are unsure then you should set ttyOnly=False for the standard EpsilonOS experience.",
+			"ttyOnly=false",
+		]) + "\n"
+		CreateFile("./offline.conf", offlineDotConf, 0o600)
+		PrintWarning("./offline.conf does not exist in the current working directory so a blank template was created.")
+		PrintWarning("Please fill out each field in ./offline.conf with your desired options and run eos_install again.")
 		print()
-
+		return 1
+	rootDrive = None
+	efiDrive = None
+	password = None
+	pin = None
+	ttyOnly = None
+	for line in ReadFile("./offline.conf").splitlines():
+		if line.startswith("#") or line == "":
+			continue
+		elif not "=" in line:
+			PrintError(f"Invalid line in offline.conf: {line}")
+			return 1
+		else:
+			key = line[:line.find("=")]
+			value = line[line.find("=") + 1:]
+			if key == "rootDrive":
+				if rootDrive != None:
+					PrintError(f"rootDrive was already set in offline.conf: {line}")
+					return 1
+				if RunCommand(f"sh -c \'if [ -b \"{value}\" ]; then exit 0; else exit 1; fi\'", check=False) != 0:
+					PrintError(f"rootDrive specified in offline.conf was not a valid block device: {line}")
+					return 1
+				rootDrive = value
+			elif key == "efiDrive":
+				if efiDrive != None:
+					PrintError(f"efiDrive was already set in offline.conf: {line}")
+					return 1
+				if value != "" and RunCommand(f"sh -c \'if [ -b \"{value}\" ]; then exit 0; else exit 1; fi\'", check=False) != 0:
+					PrintError(f"efiDrive specified in offline.conf was not a valid block device: {line}")
+					return 1
+				efiDrive = value
+			elif key == "password":
+				if password != None:
+					PrintError(f"password was already set in offline.conf: {line}")
+					return 1
+				if value == "":
+					PrintError(f"password specified in offline.conf was empty: {line}")
+					return 1
+				if len(value) < 16:
+					PrintWarning(f"password specified in offline.conf is less than 16 characters in length: {line}")
+				password = value
+			elif key == "pin":
+				if pin != None:
+					PrintError(f"pin was already set in offline.conf: {line}")
+					return 1
+				if value == "":
+					PrintError(f"pin specified in offline.conf was empty: {line}")
+					return 1
+				pin = value
+			elif key == "ttyOnly":
+				if ttyOnly != None:
+					PrintError(f"ttyOnly was already set in offline.conf: {line}")
+					return 1
+				if value.lower() == "true":
+					ttyOnly = True
+				elif value.lower() == "false":
+					ttyOnly = False
+				else:
+					PrintError(f"ttyOnly specified in offline.conf must be either True or False: {line}")
+					return 1
+			else:
+				PrintError(f"Unknown key in offline.conf: {line}")
+				return 1
+	if rootDrive == None:
+		PrintError(f"rootDrive was not specified in offline.conf.")
+		return 1
+	if efiDrive == None or efiDrive == "":
+		efiDrive = rootDrive
 	if password == None:
-		while True:
-			print("Input a strong password for your account (at least 16 characters): ", end="")
-			password = input_password()
-			if len(password) < 16:
-				PrintError(f"A password length of 16 or greater is required for security.")
-			else:
-				print("Please retype your password: ", end="")
-				passwordConfirmation = input_password()
-				if password != passwordConfirmation:
-					PrintError("Passwords did not match.")
-				else:
-					break
-		print()
-
+		PrintError(f"password was not specified in offline.conf.")
+		return 1
 	if pin == None:
-		while True:
-			print("Input a pin for your account (6 digits recommended): ", end="")
-			pin = input_password()
-			print("Please retype your pin: ", end="")
-			pinConfirmation = input_password()
-			if pin != pinConfirmation:
-				PrintError("Pins did not match.")
-			else:
-				break
-		print()
+		PrintError(f"pin was not specified in offline.conf.")
+		return 1
+	if ttyOnly == None:
+		ttyOnly = False
+	
+
 
 	# Disk, partition, filesystem, and encryption setup
 	print("Creating new GPT partition table...")
-	RunCommand(f"wipefs -a \"{installTarget}\"")
-	RunCommand(f"sgdisk --clear \"{installTarget}\"")
+	RunCommand(f"wipefs -a \"{rootDrive}\"")
+	RunCommand(f"sgdisk --clear \"{rootDrive}\"")
+	if efiDrive != rootDrive:
+		RunCommand(f"wipefs -a \"{efiDrive}\"")
+		RunCommand(f"sgdisk --clear \"{efiDrive}\"")
 
 	print("Creating partitions...")
-	RunCommand(f"sgdisk --new=0:0:+512M --typecode=0:EF00 --change-name=0:\"EpsilonOS EFI Partition\" \"{installTarget}\"")
-	RunCommand(f"sgdisk --new=0:0:0 --typecode=0:8309 --change-name=0:\"EpsilonOS Root\" \"{installTarget}\"")
-	RunCommand(f"partprobe \"{installTarget}\"")
+	RunCommand(f"sgdisk --new=1:0:+512M --typecode=1:EF00 --change-name=1:\"EpsilonOS EFI Partition\" \"{efiDrive}\"")
+	efiPart = efiDrive + ("p1" if efiDrive[-1].isdigit() else "1")
+	if efiDrive != rootDrive:
+		RunCommand(f"partprobe \"{efiDrive}\"")
+	if efiDrive != rootDrive:
+		RunCommand(f"sgdisk --new=1:0:0 --typecode=1:8309 --change-name=1:\"EpsilonOS Root\" \"{rootDrive}\"")
+		rootPart = rootDrive + ("p1" if rootDrive[-1].isdigit() else "1")
+	else:
+		RunCommand(f"sgdisk --new=2:0:0 --typecode=2:8309 --change-name=2:\"EpsilonOS Root\" \"{rootDrive}\"")
+		rootPart = rootDrive + ("p2" if rootDrive[-1].isdigit() else "2")
+	RunCommand(f"partprobe \"{rootDrive}\"")
 	
 	print("Setting up disk encryption...")
-	RunCommand(f"cryptsetup luksFormat \"{installTarget}{"p2" if installTarget[-1].isdigit() else "2"}\" --type luks2 --cipher aes-xts-plain64 --force-password --hash sha512 --pbkdf argon2id --use-random --batch-mode", input=password) # OPTIONAL: --integrity hmac-sha256
-	RunCommand(f"cryptsetup open \"{installTarget}{"p2" if installTarget[-1].isdigit() else "2"}\" new_cryptroot --batch-mode", input=password)
+	RunCommand(f"cryptsetup luksFormat \"{rootPart}\" --type luks2 --cipher aes-xts-plain64 --force-password --hash sha512 --pbkdf argon2id --use-random --batch-mode", input=password) # OPTIONAL: --integrity hmac-sha256
+	RunCommand(f"cryptsetup open \"{rootPart}\" new_cryptroot --batch-mode", input=password)
 
 	print("Creating filesystems...")
-	RunCommand(f"mkfs.fat -F32 -n \"EFI\" -S 4096 \"{installTarget}{"p1" if installTarget[-1].isdigit() else "1"}\"")
+	RunCommand(f"mkfs.fat -F32 -n \"EFI\" -S 4096 \"{efiPart}\"")
 	RunCommand("mkfs.ext4 -q -L \"EOS Root\" -E lazy_journal_init /dev/mapper/new_cryptroot")
 	
 	print("Mounting filesystems...")
 	os.makedirs("/new_root/", exist_ok=True)
 	RunCommand("mount /dev/mapper/new_cryptroot /new_root")
 	os.makedirs("/new_root/boot", exist_ok=True)
-	RunCommand(f"mount \"{installTarget}{"p1" if installTarget[-1].isdigit() else "1"}\" /new_root/boot")	
+	RunCommand(f"mount \"{efiPart}\" /new_root/boot")	
 
 	# Pacstrap base system install
 	print("Installing base system... (This will take a very long time.)")
@@ -258,19 +288,22 @@ def Main():
 
 	# Genfstab
 	print(f"Generating fstab...")
-	bootPartitionUUID = RunCommand(f"blkid -o value -s UUID \"{installTarget}{"p1" if installTarget[-1].isdigit() else "1"}\"", capture=True)
-	rootPartitionUUID = RunCommand("blkid -o value -s UUID /dev/mapper/new_cryptroot", capture=True)
-	eosDriveSupportsTrim = ReadFile(f"/sys/block/{os.path.basename(installTarget)}/queue/discard_max_bytes").strip() != "0"
+	efiPartUUID = RunCommand(f"blkid -o value -s UUID \"{efiPart}\"", capture=True)
+	rootPartUUID = RunCommand("blkid -o value -s UUID /dev/mapper/new_cryptroot", capture=True)
+	eosDriveSupportsTrim = ReadFile(f"/sys/block/{os.path.basename(rootDrive)}/queue/discard_max_bytes").strip() != "0"
 	fstab = "\n".join([
 		f"# EpsilonOS Root",
-		f"UUID={rootPartitionUUID} / ext4 rw,noatime,errors=remount-ro{",discard" if eosDriveSupportsTrim else ""} 0 1",
+		f"UUID={rootPartUUID} / ext4 rw,noatime,errors=remount-ro{",discard" if eosDriveSupportsTrim else ""} 0 1",
 		f"",
 		f"# EpsilonOS EFI Partition",
-		f"UUID={bootPartitionUUID} /boot vfat rw,noatime,errors=remount-ro,uid=0,gid=0,dmask=0077,fmask=0177,codepage=437,iocharset=ascii,shortname=mixed,utf8{",discard" if eosDriveSupportsTrim else ""} 0 2",
-		f"",
-		f"# EpsilonOS Swap" if os.path.exists("/new_root/swapfile") else "",
-		f"/swapfile swap swap sw 0 0" if os.path.exists("/new_root/swapfile") else "",
+		f"UUID={efiPartUUID} /boot vfat rw,noatime,errors=remount-ro,uid=0,gid=0,dmask=0077,fmask=0177,codepage=437,iocharset=ascii,shortname=mixed,utf8{",discard" if eosDriveSupportsTrim else ""} 0 2",
 	]) + "\n"
+	if os.path.exists("/new_root/swapfile"):
+		fstab += "\n".join([
+			f"",
+			f"# EpsilonOS Swap",
+			f"/swapfile swap swap sw 0 0",
+		]) + "\n"
 	WriteFile("/new_root/etc/fstab", fstab)
 	RunCommand("chown +0:+0 /new_root/etc/fstab")
 	RunCommand("chmod 0644 /new_root/etc/fstab")
@@ -385,41 +418,42 @@ def Main():
 	RunCommand("chown +0:+0 /new_root/etc/systemd/resolved.conf")
 	RunCommand("chmod 644 /new_root/etc/systemd/resolved.conf")
 
-	# Install sddm
-	RunCommand("pacstrap /new_root sddm --noconfirm", echo=True)
-	RunCommand("arch-chroot /new_root systemctl enable sddm.service")
-	RunCommand("mkdir -p /new_root/etc/sddm.conf.d")
-	RunCommand("chown +0:+0 /new_root/etc/sddm.conf.d")
-	RunCommand("chmod 755 /new_root/etc/sddm.conf.d")
-	NumlockDotConf = "\n".join([
-		f"[General]",
-		f"Numlock=on",
-	]) + "\n"
-	WriteFile("/new_root/etc/sddm.conf.d/numlock.conf", NumlockDotConf)
-	RunCommand("chown +0:+0 /new_root/etc/sddm.conf.d/numlock.conf")
-	RunCommand("chmod 644 /new_root/etc/sddm.conf.d/numlock.conf")
-	AutoLoginDotConf = "\n".join([
-		f"[Autologin]",
-		f"Relogin=false",
-		f"Session=plasma.desktop",
-		f"User=epsilon",
-	]) + "\n"
-	WriteFile("/new_root/etc/sddm.conf.d/auto_login.conf", AutoLoginDotConf)
-	RunCommand("chown +0:+0 /new_root/etc/sddm.conf.d/auto_login.conf")
-	RunCommand("chmod 644 /new_root/etc/sddm.conf.d/auto_login.conf")
+	if not ttyOnly:
+		# Install sddm
+		RunCommand("pacstrap /new_root sddm --noconfirm", echo=True)
+		RunCommand("arch-chroot /new_root systemctl enable sddm.service")
+		RunCommand("mkdir -p /new_root/etc/sddm.conf.d")
+		RunCommand("chown +0:+0 /new_root/etc/sddm.conf.d")
+		RunCommand("chmod 755 /new_root/etc/sddm.conf.d")
+		NumlockDotConf = "\n".join([
+			f"[General]",
+			f"Numlock=on",
+		]) + "\n"
+		WriteFile("/new_root/etc/sddm.conf.d/numlock.conf", NumlockDotConf)
+		RunCommand("chown +0:+0 /new_root/etc/sddm.conf.d/numlock.conf")
+		RunCommand("chmod 644 /new_root/etc/sddm.conf.d/numlock.conf")
+		AutoLoginDotConf = "\n".join([
+			f"[Autologin]",
+			f"Relogin=false",
+			f"Session=plasma.desktop",
+			f"User=epsilon",
+		]) + "\n"
+		WriteFile("/new_root/etc/sddm.conf.d/auto_login.conf", AutoLoginDotConf)
+		RunCommand("chown +0:+0 /new_root/etc/sddm.conf.d/auto_login.conf")
+		RunCommand("chmod 644 /new_root/etc/sddm.conf.d/auto_login.conf")
 
-	# Set the default target to the graphical target
-	RunCommand("arch-chroot /new_root systemctl set-default graphical.target")
+		# Set the default target to the graphical target
+		RunCommand("arch-chroot /new_root systemctl set-default graphical.target")
 
-	# Install KDE Plasma
-	RunCommand("pacstrap /new_root plasma-desktop sddm-kcm plasma-workspace qt6-wayland --noconfirm", echo=True)
+		# Install KDE Plasma
+		RunCommand("pacstrap /new_root plasma-desktop sddm-kcm plasma-workspace qt6-wayland --noconfirm", echo=True)
 
 	# Unmount /new_root
 	RunCommand("umount /new_root/boot")
 	RunCommand("umount /new_root")
 	RunCommand("cryptsetup close new_cryptroot")
 
-	print(f"Success! EpsilonOS has been installed onto {installTarget}.")
+	print(f"Success! EpsilonOS has been installed.")
 sys.exit(Main())
 
 
