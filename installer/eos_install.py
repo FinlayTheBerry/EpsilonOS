@@ -347,7 +347,7 @@ def Main():
 
 	# Create the user and set their password and assign them membership in wheel
 	RunCommand(f"arch-chroot /new_root useradd -m -G wheel -c Epsilon epsilon")
-	RunCommand(f"arch-chroot /new_root bash -c \'echo \'\\\'\'epsilon:{password.replace("\'", "\'\\\'\'")}\'\\\'\' | chpasswd\'")
+	RunCommand(f"arch-chroot /new_root bash -c \'echo \'\\\'\'epsilon:{pin.replace("\'", "\'\\\'\'")}\'\\\'\' | chpasswd\'")
 	RunCommand(f"arch-chroot /new_root chage -m -1 -M -1 -W -1 -I -1 -E \"\" epsilon")
 	
 	# Install sudo and setup the sudoers file and faillock.conf
