@@ -401,7 +401,7 @@ def Main():
 	RunCommand("chmod 644 /new_root/etc/systemd/network/default.network")
 	ResolvedDotConf = "\n".join([
 		"[Resolve]",
-		"DNS=194.242.2.2#dns.mullvad.net 2a07:e340::2#dns.mullvad.net",
+		"DNS=1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com 2606:4700:4700::1111#cloudflare-dns.com 2606:4700:4700::1001#cloudflare-dns.com",
 		"FallbackDNS=",
 		"DNSSEC=yes",
 		"DNSOverTLS=yes",
