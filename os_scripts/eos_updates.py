@@ -55,11 +55,12 @@ def Main():
         print("There is nothing to do.")
     else:
         print(f"{" ".join(orphans)}")
-        RunCommand(f"yay -Rns {" ".join(orphans)} --noconfirm")
+        RunCommand(f"yay -Rns {" ".join(orphans)} --noconfirm", echo=True)
     print()
 
     print("\033[36mClearing cache...\033[0m")
-    RunCommand("yay -Scc --noconfirm", echo=True)
+    RunCommand("sudo rm -rf /var/cache/pacman/pkg/*", echo=True)
+    RunCommand("rm -rf ~/.cache/yay/*", echo=True)
     print()
 
     return 0

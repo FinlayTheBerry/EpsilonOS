@@ -60,7 +60,7 @@ def Main():
 	# Run sudo pacman -Sy archlinux-keyring on host to fix.
 
 	# Initialization and scanity checking
-	ignoreScanityFailures = False
+	ignoreScanityFailures = True
 	DEPENDENCIES = [
 		("uname", "util-linux"),
 		("id", "util-linux"),
@@ -87,15 +87,15 @@ def Main():
 			if not ignoreScanityFailures:
 				return 1
 	if not os.path.ismount("/sys"):
-		PrintError("Nothing is mounted on /sys. IntegraBoot requires SysFs.")
+		PrintError("Nothing is mounted on /sys. eos_install requires SysFs.")
 		if not ignoreScanityFailures:
 			return 1
 	if not os.path.ismount("/proc"):
-		PrintError("Nothing is mounted on /proc. IntegraBoot requires Proc.")
+		PrintError("Nothing is mounted on /proc. eos_install requires Proc.")
 		if not ignoreScanityFailures:
 			return 1
 	if not os.path.ismount("/dev"):
-		PrintError("Nothing is mounted on /dev. IntegraBoot requires DevTmpFs.")
+		PrintError("Nothing is mounted on /dev. eos_install requires DevTmpFs.")
 		if not ignoreScanityFailures:
 			return 1
 	cpuinfo = ReadFile("/proc/cpuinfo").replace("\t", "")
@@ -139,10 +139,6 @@ def Main():
 			"# Sets the drive where EpsilonOS should be installed. (e.g. /dev/sda)",
 			"rootDrive=",
 			"",
-			"# Sets a secondary drive where the efi system partition should be placed. (e.g. /dev/sdb)",
-			"# Leave this field blank to place the efi system partition on the rootDrive.",
-			"efiDrive=",
-			"",
 			"# Sets the disk encryption password for the rootDrive. A password of at least 16 characters in length is strongly recommended.",
 			"password=",
 			"",
@@ -155,6 +151,10 @@ def Main():
 			"# If ttyOnly=False then the KDE Plasma desktop will be installed with the SDDM login manager.",
 			"# If you are unsure then you should set ttyOnly=False for the standard EpsilonOS experience.",
 			"ttyOnly=false",
+			"",
+			"# Sets a secondary drive where the efi system partition should be placed. (e.g. /dev/sdb)",
+			"# Leave this field blank to place the efi system partition on the rootDrive.",
+			"efiDrive=",
 		]) + "\n"
 		CreateFile("./offline.conf", offlineDotConf, 0o600)
 		PrintWarning("./offline.conf does not exist in the current working directory so a blank template was created.")
@@ -238,7 +238,7 @@ def Main():
 		ttyOnly = False
 	
 
-
+	"""
 	# Disk, partition, filesystem, and encryption setup
 	print("Creating new GPT partition table...")
 	RunCommand(f"wipefs -a \"{rootDrive}\"")
@@ -275,16 +275,16 @@ def Main():
 	RunCommand(f"mount \"{efiPart}\" /new_root/boot")	
 
 	# Pacstrap base system install
-	print("Installing base system... (This will take a very long time.)")
-	RunCommand("pacstrap /new_root base linux linux-firmware --noconfirm", echo=True)
+	print("Installing base system...")
+	RunCommand("pacstrap /new_root base linux linux-firmware-amdgpu linux-firmware-atheros linux-firmware-broadcom linux-firmware-cirrus linux-firmware-intel linux-firmware-mediatek linux-firmware-nvidia linux-firmware-other linux-firmware-radeon linux-firmware-realtek linux-firmware-liquidio linux-firmware-marvell linux-firmware-mellanox linux-firmware-nfp linux-firmware-qcom linux-firmware-qlogic nano --noconfirm", echo=True)
 	print()
 
 	# Mkswap
-	print(f"Not Creating swapfile due to insufficient space...")
-	RunCommand("fallocate -l 4G /new_root/swapfile")
-	RunCommand("chown +0:+0 /new_root/swapfile")
-	RunCommand("chmod 0600 /new_root/swapfile")
-	RunCommand("mkswap /new_root/swapfile")
+	# print(f"Not Creating swapfile due to insufficient space...")
+	# RunCommand("fallocate -l 4G /new_root/swapfile")
+	# RunCommand("chown +0:+0 /new_root/swapfile")
+	# RunCommand("chmod 0600 /new_root/swapfile")
+	# RunCommand("mkswap /new_root/swapfile")
 
 	# Genfstab
 	print(f"Generating fstab...")
@@ -310,6 +310,9 @@ def Main():
 	print()
 
 	print("Installing IntegraBoot...")
+	# Install IntegraBoot deps
+	RunCommand("pacstrap /new_root python efibootmgr efitools --noconfirm", echo=True)
+	# Install integraboot.py and integrastub.efi from GitHub
 	RunCommand("curl -L https://github.com/FinlayTheBerry/IntegraBoot/releases/latest/download/integraboot.py -o /new_root/usr/bin/integraboot")
 	RunCommand("chown +0:+0 /new_root/usr/bin/integraboot")
 	RunCommand("chmod 0755 /new_root/usr/bin/integraboot")
@@ -319,10 +322,7 @@ def Main():
 	RunCommand("curl -L https://github.com/FinlayTheBerry/IntegraBoot/releases/latest/download/integrastub.efi -o /new_root/var/lib/integraboot/integrastub.efi")
 	RunCommand("chown +0:+0 /new_root/var/lib/integraboot/integrastub.efi")
 	RunCommand("chmod 0400 /new_root/var/lib/integraboot/integrastub.efi")
-	RunCommand("pacstrap /new_root python efibootmgr efitools --noconfirm", echo=True)
-	print()
-
-	print("Running IntegraBoot...")
+	# Run IntegraBoot
 	RunCommand("arch-chroot /new_root integraboot", echo=True)
 	print()
 
@@ -369,12 +369,21 @@ def Main():
 	RunCommand("chown +0:+0 /new_root/etc/security/faillock.conf")
 	RunCommand("chmod 0644 /new_root/etc/security/faillock.conf")
 
+	# Install yay-bin
+	RunCommand("pacstrap /new_root base-devel --noconfirm", echo=True)
+	RunCommand("arch-chroot /new_root sudo -u epsilon mkdir /home/epsilon/yay-bin")
+	RunCommand("arch-chroot /new_root sudo -u epsilon curl https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=yay-bin -o /home/epsilon/yay-bin/PKGBUILD")
+	RunCommand("arch-chroot /new_root sudo -u epsilon sh -c \'cd /home/epsilon/yay-bin && makepkg --nodeps\'")
+	RunCommand("arch-chroot /new_root sudo -u epsilon sh -c \'rm /home/epsilon/yay-bin/yay-bin-debug-*.pkg.tar.zst\'")
+	RunCommand("arch-chroot /new_root sh -c \'pacman -U --noconfirm --needed /home/epsilon/yay-bin/yay-bin-*.pkg.tar.zst\'", echo=True)
+	RunCommand("arch-chroot /new_root sudo -u epsilon rm -rf /home/epsilon/yay-bin")
+
 	# Set default target to multi user target
 	RunCommand("arch-chroot /new_root systemctl set-default multi-user.target")
 
 	# Setup networkd and resolved
-	RunCommand(f"arch-chroot /new_root systemctl enable systemd-networkd.service")
-	RunCommand(f"arch-chroot /new_root systemctl enable systemd-resolved.service")
+	RunCommand("arch-chroot /new_root systemctl enable systemd-networkd.service")
+	RunCommand("arch-chroot /new_root systemctl enable systemd-resolved.service")
 	RunCommand("mkdir -p /new_root/etc/systemd")
 	RunCommand("chown +0:+0 /new_root/etc/systemd")
 	RunCommand("chmod 755 /new_root/etc/systemd")
@@ -418,42 +427,54 @@ def Main():
 	RunCommand("chown +0:+0 /new_root/etc/systemd/resolved.conf")
 	RunCommand("chmod 644 /new_root/etc/systemd/resolved.conf")
 
+	"""
 	if not ttyOnly:
-		# Install sddm
-		RunCommand("pacstrap /new_root sddm --noconfirm", echo=True)
+		"""
+		# TTYS=$(busybox ls /dev/tty* | busybox grep -E '^/dev/tty[0-9]+$'); for tty in $TTYS; do /usr/bin/setleds -D +num -caps -scroll < $tty; done
+		
+		# Install KDE Plasma
+		RunCommand("pacstrap /new_root plasma-desktop sddm sddm-kcm --noconfirm", echo=True)
+
 		RunCommand("arch-chroot /new_root systemctl enable sddm.service")
 		RunCommand("mkdir -p /new_root/etc/sddm.conf.d")
 		RunCommand("chown +0:+0 /new_root/etc/sddm.conf.d")
 		RunCommand("chmod 755 /new_root/etc/sddm.conf.d")
-		NumlockDotConf = "\n".join([
+		SDDMEpsilonOSDotConf = "\n".join([
 			f"[General]",
 			f"Numlock=on",
-		]) + "\n"
-		WriteFile("/new_root/etc/sddm.conf.d/numlock.conf", NumlockDotConf)
-		RunCommand("chown +0:+0 /new_root/etc/sddm.conf.d/numlock.conf")
-		RunCommand("chmod 644 /new_root/etc/sddm.conf.d/numlock.conf")
-		AutoLoginDotConf = "\n".join([
+			f"",
 			f"[Autologin]",
 			f"Relogin=false",
-			f"Session=plasma.desktop",
 			f"User=epsilon",
+			f"Session=plasma",
+			f"",
+			f"[Theme]",
+			f"Current=breeze",
+			f"CursorTheme=breeze_cursors",
+			f"Font=Noto Sans,10,-1,0,400,0,0,0,0,0,0,0,0,0,0,1",
 		]) + "\n"
-		WriteFile("/new_root/etc/sddm.conf.d/auto_login.conf", AutoLoginDotConf)
-		RunCommand("chown +0:+0 /new_root/etc/sddm.conf.d/auto_login.conf")
-		RunCommand("chmod 644 /new_root/etc/sddm.conf.d/auto_login.conf")
+		WriteFile("/new_root/etc/sddm.conf.d/EpsilonOS.conf", SDDMEpsilonOSDotConf)
+		RunCommand("chown +0:+0 /new_root/etc/sddm.conf.d/EpsilonOS.conf")
+		RunCommand("chmod 644 /new_root/etc/sddm.conf.d/EpsilonOS.conf")
 
+		RunCommand("pacstrap /new_root plasma-nm plasma-pa pipewire-pulse wireplumber kscreen powerdevil power-profiles-daemon bluedevil --noconfirm", echo=True)
+		RunCommand("arch-chroot /new_root systemctl enable NetworkManager")
+		"""
+		RunCommand("arch-chroot /new_root systemctl enable --global pipewire pipewire-pulse wireplumber")
+		RunCommand("arch-chroot /new_root systemctl enable power-profiles-daemon")
+		RunCommand("arch-chroot /new_root systemctl enable bluetooth")
+
+		RunCommand("pacstrap /new_root dolphin spectacle alacritty firefox --noconfirm", echo=True)
+		
 		# Set the default target to the graphical target
 		RunCommand("arch-chroot /new_root systemctl set-default graphical.target")
 
-		# Install KDE Plasma
-		RunCommand("pacstrap /new_root plasma-desktop sddm-kcm plasma-workspace qt6-wayland --noconfirm", echo=True)
-
 	# Unmount /new_root
-	RunCommand("umount /new_root/boot")
-	RunCommand("umount /new_root")
+	RunCommand("umount -R /new_root")
 	RunCommand("cryptsetup close new_cryptroot")
 
 	print(f"Success! EpsilonOS has been installed.")
+	print()
 sys.exit(Main())
 
 
@@ -467,29 +488,6 @@ sys.exit(Main())
 
 
 """
-# Next we install other useful tools (optional)
-pacstrap /mnt nano sudo base-devel git
-
-# Next install wifi service (optional)
-pacstrap /mnt iwd
-
-# -- Settings/Configs (from chroot) --
-# Next enable wifi service (optional)
-# You should only do this if you installed iwd with pacstrap earlier
-systemctl enable iwd
-
-
-# Next install yay manually (optional)
-mkdir /yay
-chown finlaytheberry:finlaytheberry /yay
-su finlaytheberry
-git clone https://aur.archlinux.org/yay.git
-cd yay
-makepkg -si
-yay -Rns yay-debug
-exit
-rm -rf /yay
-
 # Next set the yay config (optional)
 su finlaytheberry
 echo -e "{" > ~/.config/yay/config.json
@@ -502,47 +500,11 @@ echo -e "}" >> ~/.config/yay/config.json
 exit
 
 # Next install mkinitcpio-numlock with yay (optional)
-su finlaytheberry
 yay -S mkinitcpio-numlock
-exit
-
-# -- Setting up wifi (optional) --
-# If you need to setup wifi 
-# First scan for wifi adaperts
-iwctl device list
-
-# Then scan for wifi networks
-iwctl station wlan0 scan
-iwctl station wlan0 get-networks
-
-# Then connect to a wifi network
-iwctl station wlan0 connect FinFi
 
 # -- Setting the fastest mirrors (optional) --
 yay -S reflector
 sudo reflector --country "United States" --age 48 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
-
-# -- Plasma Desktop Environment --
-# First install the programs needed for kde plasma desktop
-yay -S sddm plasma-desktop sddm-kcm plasma-workspace qt6-wayland
-# Next enable and configure sddm
-
-# Next restart sddm after updating sddm.conf
-sudo systemctl restart sddm
-# Finally set the boot target to graphical.target and reboot
-sudo reboot
-
-# -- Audio Setup --
-# Install the tools needed for audio on linux with kde plasma
-yay -S pipewire pipewire-pulse pavucontrol plasma-pa
-# Sadly this seems to require a reboot
-sudo reboot
-
-# -- KDE Wallet Setup --
-yay -S kwalletmanager gnupg
-gpg --quick-gen-key "FinlayTheBerry <finlaytheberry@gmail.com>" rsa4096 default 0
-kwalletmanager5
-# Then from in the gui create a new wallet and use the GPG key we just created
 
 # -- KDE Plasma Settings (optional) --
 # Settings>Keyboard>NumLock on startup = Turn on
@@ -583,16 +545,4 @@ yay -S obs-studio
 yay -S ffmpeg
 yay -S libreoffice
 yay -S yt-dlp
-# And setup the multilib x86-32 arch repo
-su root
-echo -e "" >> /etc/pacman.conf
-echo -e "[multilib]" >> /etc/pacman.conf
-echo -e "Include = /etc/pacman.d/mirrorlist" >> /etc/pacman.conf
-exit
-yay -Sy
-# Then install packages which are in multilib
-yay -S steam
-yay -S wine wine-mono
-
-jetbrains stuff
 """

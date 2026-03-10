@@ -1,0 +1,155 @@
+# Base
+base
+linux
+linux-firmware
+linux-firmware-liquidio
+linux-firmware-marvell
+linux-firmware-mellanox
+linux-firmware-nfp
+linux-firmware-qcom
+linux-firmware-qlogic
+nano
+sudo
+base-devel - Unofficially required by yay-bin
+yay-bin
+python - Required by integraboot
+efibootmgr - Required by integraboot
+efitools - Required by integraboot
+mkinitcpio-numlock - Required by integraboot (optional)
+
+# GUI
+plasma-desktop - Core desktop
+sddm - More mature than plasma-login-manager (systemctl enable --now sddm)
+sddm-kcm - KDE themes and integrations with SDDM (Make sure to setup /etc/sddm.conf.d/EpsilonOS.conf)
+plasma-nm - Network Manager SysTray (systemctl enable --now NetworkManager) iwd exists but wpa_supplicant is just easier.
+plasma-pa - Audio SysTray
+pipewire-pulse - Pipewire and PulseAudio replacement (systemctl enable --now --user pipewire pipewire-pulse)
+wireplumber - Session manager for Pipewire (systemctl enable --now --user wireplumber)
+kscreen - Display settings panel
+powerdevil - Power profiles SysTray
+power-profiles-daemon - Backend for powerdevil (systemctl enable --now power-profiles-daemon)
+bluedevil - Bluetooth SysTray. Includes bluez (systemctl enable --now bluetooth)
+dolphin - File manager (not included by default)
+spectacle - Screenshot utility
+alacritty - Terminal emulator
+firefox - Web browser
+
+# Extra
+featherpad - Text editor
+bless - Hex editor
+7zip
+audacity
+desmume-git
+ghidra
+gimp
+git-filter-repo
+github-cli
+google-chrome
+prismlauncher
+python-asn1crypto
+python-beautifulsoup4
+python-build
+python-colorama
+python-dbus
+python-flask
+python-google-api-python-client
+python-google-auth-httplib2
+python-google-auth-oauthlib
+python-installer
+python-keyring
+python-pillow
+python-pkgconfig
+python-pycryptodome
+python-pyelftools
+qemu-full
+flatpak
+fuzzel
+imagemagick
+john
+kdenlive
+krita
+mgba-qt
+wine
+wine-mono
+winetricks
+wireshark-qt
+woeusb
+yt-dlp
+zip
+sway
+swaybg
+swayidle
+swaylock
+swtpm
+visual-studio-code-bin
+vlc
+vlc-plugin-ffmpeg
+meson
+cmake
+arch-install-scripts
+cpu-x
+obs-studio
+
+
+
+
+alsa-utils
+bdf2psf
+bluedevil
+bluez
+bluez-utils
+bridge-utils
+dmidecode
+dnsmasq
+dosfstools
+easyeffects
+extra-cmake-modules
+ffmpegthumbs
+gdb
+gef
+glibc
+gparted
+gperf
+gptfdisk
+hdparm
+jq
+kscreen
+less
+lib32-nvidia-utils
+libguestfs
+libreoffice-fresh
+libxml2-legacy
+man-db
+nasm
+ninja
+noto-fonts-cjk
+noto-fonts-extra
+npm
+ntfs-3g
+nvidia-open
+nvidia-utils
+nvme-cli
+openssh
+osslsigncode
+otf2bdf
+phonon-qt6-vlc
+pipewire-pulse
+plasma-systemmonitor
+qt6-wayland
+qt6-webengine
+readpe
+reflector
+rsync
+samdump2
+sbctl
+sbsigntools
+spectacle
+sshfs
+steam
+sudo
+systemd-ukify
+testdisk
+tpm2-tools
+vulkan-tools
+wayland-protocols
+webkit2gtk
