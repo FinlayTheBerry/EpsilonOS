@@ -243,6 +243,7 @@ def Main():
 		return 1
 
 
+
 	# Disk, partition, filesystem, and encryption setup
 	RUNTIME = {}
 	print("Creating new GPT partition table...")
@@ -325,6 +326,7 @@ def Main():
 	WriteFile("/new_root/etc/fstab", fstab)
 	print()
 
+	# Install IntegraBoot
 	print("Installing IntegraBoot...")
 	# Install IntegraBoot deps
 	RunCommand("pacstrap /new_root python efibootmgr efitools --noconfirm", echo=True)
@@ -338,7 +340,7 @@ def Main():
 	RunCommand("arch-chroot /new_root integraboot", echo=True)
 	print()
 
-	# Install sudo and setup the sudoers file and faillock.conf
+	# Install sudo and setup sudoers file and faillock.conf
 	RunCommand("pacstrap /new_root sudo --noconfirm", echo=True)
 	sudoers = "\n".join([
 		f"Defaults!/usr/bin/visudo env_keep += \"SUDO_EDITOR EDITOR VISUAL\"",
@@ -351,11 +353,9 @@ def Main():
 	WriteFile("/new_root/etc/sudoers", sudoers)
 	WriteFile("/new_root/etc/security/faillock.conf", "nodelay")
 
-	# Lock the root user for normal login (sudo is the only way)
+	# Setup root and epsilon users
 	RunCommand(f"arch-chroot /new_root usermod -p \'!*\' root")
 	RunCommand(f"arch-chroot /new_root usermod -s /usr/bin/nologin root")
-
-	# Create the user and set their password and assign them membership in wheel
 	RunCommand(f"arch-chroot /new_root useradd -m -G wheel -c Epsilon epsilon")
 	RunCommand(f"arch-chroot /new_root chage -m -1 -M -1 -W -1 -I -1 -E \"\" epsilon")
 	if CONF['pin'] != "":
@@ -372,13 +372,13 @@ def Main():
 	RunCommand("arch-chroot /new_root sh -c \'pacman -U --noconfirm --needed /home/epsilon/yay-bin/yay-bin-*.pkg.tar.zst\'", echo=True)
 	RunCommand("arch-chroot /new_root sudo -u epsilon rm -rf /home/epsilon/yay-bin")
 
-	# Set the hostname
+	# Set hostname
 	CreateFile("/new_root/etc/hostname", "EpsilonOS", 0o644)
 	
 	# Set default target to multi user target
 	RunCommand("arch-chroot /new_root systemctl set-default multi-user.target")
 
-	# Setup networkd and resolved
+	# Setup networkd
 	RunCommand("arch-chroot /new_root systemctl enable systemd-networkd.service")
 	DefaultDotNetwork = "\n".join([
 		f"[Match]",
@@ -397,6 +397,7 @@ def Main():
 	]) + "\n"
 	CreateFile("/new_root/etc/systemd/network/default.network", DefaultDotNetwork, 0o644)
 
+	# Setup resolved
 	RunCommand("arch-chroot /new_root systemctl enable systemd-resolved.service")
 	ResolvedDotConf = "\n".join([
 		"[Resolve]",
@@ -424,7 +425,17 @@ def Main():
 	RunCommand("arch-chroot /new_root systemctl enable systemd-timesyncd")
 	RunCommand("arch-chroot /new_root timedatectl set-timezone America/Los_Angeles")
 	RunCommand("arch-chroot /new_root timedatectl set-local-rtc 0")
-	
+
+	# Enable auto login on getty@tty1
+	if CONF['password'] != "":
+		GettyEpsilonOSDotConf = "\n".join([
+			"[Service]",
+			"ExecStart=",
+			"ExecStart=-/bin/sh -c \'if [ ! -e /run/getty_autologin_done ]; then touch /run/getty_autologin_done; exec /usr/bin/agetty --noreset --noclear --autologin epsilon - ${TERM}; else exec /usr/bin/agetty --noreset --noclear - ${TERM}; fi\'",
+		]) + "\n"
+		RunCommand("mkdir -m 755 /new_root/etc/systemd/system/getty@tty1.service.d/")
+		CreateFile("/new_root/etc/systemd/system/getty@tty1.service.d/EpsilonOS.conf", GettyEpsilonOSDotConf, 0o644)
+
 	if not CONF['tty_only']:
 		# TTYS=$(busybox ls /dev/tty* | busybox grep -E '^/dev/tty[0-9]+$'); for tty in $TTYS; do /usr/bin/setleds -D +num -caps -scroll < $tty; done
 		
@@ -460,7 +471,7 @@ def Main():
 		
 		# Set the default target to the graphical target
 		RunCommand("arch-chroot /new_root systemctl set-default graphical.target")
-		
+
 	# Unmount /new_root
 	RunCommand("umount -R /new_root")
 	if CONF['password'] != "":
