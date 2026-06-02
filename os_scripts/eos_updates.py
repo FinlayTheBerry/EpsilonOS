@@ -47,6 +47,13 @@ def Main():
         RunCommand("useradd -r -U -d /var/lib/yaybld -s /usr/bin/nologin -c \'yay build user\' -M yaybld && usermod -p \'!\' yaybld")
     if not os.path.isdir("/var/lib/yaybld"):
         RunCommand("install -d -m 700 -o yaybld -g yaybld /var/lib/yaybld")
+    sudoers_good = False
+    for line in ReadFile("/etc/sudoers").splitlines():
+        if line == "yaybld ALL=(ALL) NOPASSWD: /usr/bin/pacman":
+            sudoers_good = True
+            break
+    if not sudoers_good:
+        WriteFile("/etc/sudoers", ReadFile("/etc/sudoers") + "yaybld ALL=(ALL) NOPASSWD: /usr/bin/pacman\n")
 
     print("\033[36mUpdating all packages...\033[0m")
     RunCommand("sudo -u yaybld yay -Syu --noconfirm", echo=True)
