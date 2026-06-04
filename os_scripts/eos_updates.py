@@ -56,7 +56,7 @@ def Main():
         WriteFile("/etc/sudoers", ReadFile("/etc/sudoers") + "yaybld ALL=(ALL) NOPASSWD: /usr/bin/pacman\n")
 
     print("\033[36mUpdating all packages...\033[0m")
-    RunCommand("sudo -u yaybld yay -Syu --noconfirm", echo=True)
+    RunCommand("sudo -n -u yaybld yay -Syu --noconfirm", echo=True)
     print()
 
     print(f"\033[36mRemoving orphaned packages...\033[0m")
