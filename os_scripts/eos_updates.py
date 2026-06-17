@@ -56,7 +56,7 @@ def Main():
         WriteFile("/etc/sudoers", ReadFile("/etc/sudoers") + "yaybld ALL=(ALL) NOPASSWD: /usr/bin/pacman\n")
 
     print("\033[36mUpdating all packages...\033[0m")
-    RunCommand("sudo -n -u yaybld yay -Syu --noconfirm", echo=True)
+    RunCommand("sudo -u yaybld yay -Syu --noconfirm", echo=True)
     print()
 
     print(f"\033[36mRemoving orphaned packages...\033[0m")
@@ -75,6 +75,10 @@ def Main():
     RunCommand("find /home/*/.cache/yay -mindepth 1 -delete", check=False)
     RunCommand("find /root/.cache/yay -mindepth 1 -delete", check=False)
     print()
+
+    if RunCommand("uname -r", capture=True) != RunCommand("ls /lib/modules", capture=True):
+        print("\033[33mKernel has been updated. Please restart this system.\033[0m")
+        print()
 
     return 0
 sys.exit(Main())
