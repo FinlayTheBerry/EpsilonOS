@@ -38,47 +38,70 @@ def PrintError(message):
 # endregion
 
 def Main():
+    args = sys.argv[1:]
     if os.geteuid() != 0 or os.getegid() != 0:
         script_path = os.path.abspath(__file__)
-        return RunCommand(f"sudo \'{script_path}\'", echo=True, check=False)
+        child_args = " ".join([ f"\'{arg.replace('\'', '\\\'')}\'" for arg in args ])
+        return RunCommand(f"sudo -- \'{script_path}\' {child_args}", echo=True, check=False)
     print()
 
-    if RunCommand("id yaybld", check=False) != 0:
-        RunCommand("useradd -r -U -d /var/lib/yaybld -s /usr/bin/nologin -c \'yay build user\' -M yaybld && usermod -p \'!\' yaybld")
-    if not os.path.isdir("/var/lib/yaybld"):
-        RunCommand("install -d -m 700 -o yaybld -g yaybld /var/lib/yaybld")
-    sudoers_good = False
-    for line in ReadFile("/etc/sudoers").splitlines():
-        if line == "yaybld ALL=(ALL) NOPASSWD: /usr/bin/pacman":
-            sudoers_good = True
-            break
-    if not sudoers_good:
-        WriteFile("/etc/sudoers", ReadFile("/etc/sudoers") + "yaybld ALL=(ALL) NOPASSWD: /usr/bin/pacman\n")
-
-    print("\033[36mUpdating all packages...\033[0m")
-    RunCommand("sudo -u yaybld yay -Syu --noconfirm", echo=True)
-    print()
-
-    print(f"\033[36mRemoving orphaned packages...\033[0m")
-    stdout, _ = RunCommand("pacman -Qqdt", capture=True, check=False)
-    orphans = stdout.splitlines()
-    if len(orphans) == 0:
-        print("There is nothing to do.")
-    else:
-        print(f"{" ".join(orphans)}")
-        RunCommand(f"pacman -Rns {" ".join(orphans)} --noconfirm", echo=True)
-    print()
-
-    print("\033[36mClearing cache...\033[0m")
-    RunCommand("find /var/cache/pacman/pkg -mindepth 1 -delete", check=False)
-    RunCommand("find /var/lib/yaybld -mindepth 1 -delete", check=False)
-    RunCommand("find /home/*/.cache/yay -mindepth 1 -delete", check=False)
-    RunCommand("find /root/.cache/yay -mindepth 1 -delete", check=False)
-    print()
-
-    if RunCommand("uname -r", capture=True) != RunCommand("ls /lib/modules", capture=True):
-        print("\033[33mKernel has been updated. Please restart this system.\033[0m")
+    if len(args) == 1 and args[0] == "list":
+        native_packages = RunCommand("pacman -Qein", capture=True).split("\n\n")
+        print(f"Official Arch Packages ({len(native_packages)}):")
+        for package in native_packages:
+            _, _, name = [ line for line in package.splitlines() if line.startswith("Name ") ][0].partition(": ")
+            _, _, description = [ line for line in package.splitlines() if line.startswith("Description ") ][0].partition(": ")
+            print(f"{name} - {description}")
         print()
 
-    return 0
+        aur_packages = RunCommand("pacman -Qeim", capture=True).split("\n\n")
+        print(f"AUR Packages ({len(aur_packages)}):")
+        for package in aur_packages:
+            _, _, name = [ line for line in package.splitlines() if line.startswith("Name ") ][0].partition(": ")
+            _, _, description = [ line for line in package.splitlines() if line.startswith("Description ") ][0].partition(": ")
+            print(f"{name} - {description}")
+        print()
+        return 0
+    elif len(args) != 0:
+        PrintError(f"Unknown args: {' '.join(args)}")
+        return 255
+    else:
+        if RunCommand("id yaybld", check=False) != 0:
+            RunCommand("useradd -r -U -d /var/lib/yaybld -s /usr/bin/nologin -c \'yay build user\' -M yaybld && usermod -p \'!\' yaybld")
+        if not os.path.isdir("/var/lib/yaybld"):
+            RunCommand("install -d -m 700 -o yaybld -g yaybld /var/lib/yaybld")
+        sudoers_good = False
+        for line in ReadFile("/etc/sudoers").splitlines():
+            if line == "yaybld ALL=(ALL) NOPASSWD: /usr/bin/pacman":
+                sudoers_good = True
+                break
+        if not sudoers_good:
+            WriteFile("/etc/sudoers", ReadFile("/etc/sudoers") + "yaybld ALL=(ALL) NOPASSWD: /usr/bin/pacman\n")
+
+        print("\033[36mUpdating all packages...\033[0m")
+        RunCommand("sudo -u yaybld yay -Syu --noconfirm", echo=True)
+        print()
+
+        print(f"\033[36mRemoving orphaned packages...\033[0m")
+        stdout, _ = RunCommand("pacman -Qqdt", capture=True, check=False)
+        orphans = stdout.splitlines()
+        if len(orphans) == 0:
+            print("There is nothing to do.")
+        else:
+            print(f"{" ".join(orphans)}")
+            RunCommand(f"pacman -Rns {" ".join(orphans)} --noconfirm", echo=True)
+        print()
+
+        print("\033[36mClearing cache...\033[0m")
+        RunCommand("find /var/cache/pacman/pkg -mindepth 1 -delete", check=False)
+        RunCommand("find /var/lib/yaybld -mindepth 1 -delete", check=False)
+        RunCommand("find /home/*/.cache/yay -mindepth 1 -delete", check=False)
+        RunCommand("find /root/.cache/yay -mindepth 1 -delete", check=False)
+        print()
+
+        if RunCommand("uname -r", capture=True) != RunCommand("ls /lib/modules", capture=True):
+            print("\033[33mKernel has been updated. Please restart this system.\033[0m")
+            print()
+
+        return 0
 sys.exit(Main())

@@ -1,6 +1,5 @@
 #!/bin/env python
 
-import requests
 import subprocess
 import os
 import sys
@@ -357,7 +356,7 @@ def Main():
 	RunCommand(f"arch-chroot /new_root usermod -p \'!*\' root")
 	RunCommand(f"arch-chroot /new_root usermod -s /usr/bin/nologin root")
 	RunCommand(f"arch-chroot /new_root useradd -m -G wheel -c Epsilon epsilon")
-	RunCommand(f"arch-chroot /new_root chage -m -1 -M -1 -W -1 -I -1 -E \"\" epsilon")
+	RunCommand(f"arch-chroot /new_root chage -d -1 -E \"\" -M -1 -W -1 -I -1 epsilon")
 	if CONF['pin'] != "":
 		RunCommand(f"arch-chroot /new_root bash -c \'echo \'\\\'\'epsilon:{CONF['pin'].replace("\'", "\'\\\'\'")}\'\\\'\' | chpasswd\'")
 	else:
@@ -467,7 +466,7 @@ def Main():
 		RunCommand("arch-chroot /new_root systemctl enable power-profiles-daemon")
 		RunCommand("arch-chroot /new_root systemctl enable bluetooth")
 
-		RunCommand("pacstrap /new_root dolphin spectacle alacritty firefox --noconfirm", echo=True)
+		RunCommand("pacstrap /new_root dolphin spectacle alacritty librewolf --noconfirm", echo=True)
 		
 		# Set the default target to the graphical target
 		RunCommand("arch-chroot /new_root systemctl set-default graphical.target")
