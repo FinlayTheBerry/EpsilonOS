@@ -17,13 +17,12 @@ def ReadFile(filePath, defaultContents=None, binary=False):
             return defaultContents
     with open(filePath, "rb" if binary else "r", encoding=(None if binary else "UTF-8")) as file:
         return file.read()
-def RunCommand(command, echo=False, capture=False, input=None, check=True, env=None):
+def RunCommand(command, echo=False, capture=False, noerr=False, input=None, check=True, env=None):
     if echo and capture:
         raise Exception("Command cannot be run with both echo and capture.")
-    result = subprocess.run(command, stdout=(None if echo else subprocess.PIPE), stderr=(None if echo else subprocess.STDOUT), input=input, env=env, check=False, shell=True, text=True)
+    result = subprocess.run(command, stdout=(None if echo else subprocess.PIPE), stderr=(subprocess.DEVNULL if noerr else (None if echo else subprocess.STDOUT)), input=input, env=env, check=False, shell=True, text=True)
     if check and result.returncode != 0:
-        print(result.stdout)
-        raise Exception(f"Sub-process returned non-zero exit code.\nExitCode: {result.returncode}\nCmdLine: {command}")
+        raise Exception(f"Sub-process returned non-zero exit code.\nExitCode: {result.returncode}\nCmdLine: {command}{'\n\n' + result.stdout if not echo else ''}")
     if capture and not check:
         return result.stdout.strip(), result.returncode
     elif capture:
@@ -75,7 +74,7 @@ def Main():
 
     # Enumerating files and folders
     print("Locating repos...")
-    repo_paths = [ os.path.dirname(repo_path) for repo_path in RunCommand(f"find \"/important_data/\" \"/finserv/\" -type d -name \".git\"", capture=True, check=False)[0].splitlines() ]
+    repo_paths = [ os.path.dirname(repo_path) for repo_path in RunCommand(f"find \"/important_data/\" \"/finserv/\" -type d -name \".git\"", capture=True, check=False, noerr=True)[0].splitlines() ]
     print()
     
     # Committing and pushing git repos
