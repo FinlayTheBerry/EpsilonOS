@@ -75,33 +75,36 @@ def Main():
 
     # Enumerating files and folders
     print("Locating repos...")
-    repo_paths = [ os.path.dirname(repo_path) for repo_path in RunCommand(f"find \"/important_data/\" -type d -name \".git\"", capture=True).splitlines() ]
+    repo_paths = [ os.path.dirname(repo_path) for repo_path in RunCommand(f"find \"/important_data/\" \"/finserv/\" -type d -name \".git\"", capture=True, check=False)[0].splitlines() ]
     print()
     
     # Committing and pushing git repos
     print("Committing and pushing all repos...")
     for i in range(len(repo_paths)):
-        print(f"{i} of {len(repo_paths)}...")
         repo_path = repo_paths[i]
-        os.chdir(repo_path)
-        remote = RunCommand("git remote", capture=True)
-        if remote == "":
-            PrintError(f"Repo \"{repo_path}\" has a no origin.")
-            continue
-        origin = RunCommand(f"git remote get-url \"{remote}\"", capture=True)
-        if not origin.startswith(f"git@github.com:{githubUsername}/") or not origin.endswith(".git"):
-            PrintWarning(f"Repo \"{repo_path}\" has a bad origin \"{origin}\".")
-            continue
-        if not os.path.isfile(os.path.join(repo_path, ".gitignore")):
-            PrintError(f"Repo \"{repo_path}\" has no .gitignore.")
-            continue
-        changes = RunCommand(f"git status --porcelain", capture=True)
-        if changes != "":
-            print(f"Committing and pushing changes to \"{repo_path}\"...")
-            RunCommand(f"git rm --cached -r .", check=False) # Ignore status as this fails when nothing is tracked currently
-            RunCommand(f"git add --all")
-            RunCommand(f"git commit -m\"Auto-generated backup commit.\"")
-        RunCommand(f"git push origin --all")
+        print(f"{i} of {len(repo_paths)} {repo_path}...")
+        try:
+            os.chdir(repo_path)
+            remote = RunCommand("git remote", capture=True)
+            if remote == "":
+                PrintError(f"Repo \"{repo_path}\" has a no origin.")
+                continue
+            origin = RunCommand(f"git remote get-url \"{remote}\"", capture=True)
+            if not origin.startswith(f"git@github.com:{githubUsername}/") or not origin.endswith(".git"):
+                PrintWarning(f"Repo \"{repo_path}\" has a bad origin \"{origin}\".")
+                continue
+            if not os.path.isfile(os.path.join(repo_path, ".gitignore")):
+                PrintError(f"Repo \"{repo_path}\" has no .gitignore.")
+                continue
+            changes = RunCommand(f"git status --porcelain", capture=True)
+            if changes != "":
+                print(f"Committing and pushing changes to \"{repo_path}\"...")
+                RunCommand(f"git rm --cached -r .", check=False) # Ignore status as this fails when nothing is tracked currently
+                RunCommand(f"git add --all")
+                RunCommand(f"git commit -m\"Auto-generated backup commit.\"")
+            RunCommand(f"git push origin --all")
+        except Exception as ex:
+            PrintError(repr(ex))
 
     print("Backup Complete!")
     return 0
